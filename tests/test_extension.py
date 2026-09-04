@@ -18,7 +18,7 @@ class ExtensionContractTests(unittest.TestCase):
 
     def test_manifest_v3_has_stable_id_and_minimal_permissions(self):
         self.assertEqual(self.manifest["manifest_version"], 3)
-        self.assertEqual(self.manifest["version"], "0.2.3")
+        self.assertEqual(self.manifest["version"], "0.2.4")
         public_key = base64.b64decode(self.manifest["key"], validate=True)
         alphabet = "abcdefghijklmnop"
         extension_id = "".join(alphabet[byte >> 4] + alphabet[byte & 15] for byte in hashlib.sha256(public_key).digest()[:16])

@@ -674,7 +674,7 @@ class AdaptiveServerTests(unittest.TestCase):
         self.assertEqual(health.status_code, 200)
         self.assertEqual(health.json()["items"], 16)
         self.assertEqual(health.json()["builder_version"], "video-pack-builder/1.9.2")
-        self.assertEqual(health.json()["extension_version"], "0.2.3")
+        self.assertEqual(health.json()["extension_version"], "0.2.4")
         self.assertTrue(health.json()["progressive_learning_enabled"])
 
         profile = self.client.get("/api/profile").json()

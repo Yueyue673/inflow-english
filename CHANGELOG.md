@@ -2,6 +2,23 @@
 
 All notable public changes are documented here.
 
+## 0.2.4 — 2026-09-04
+
+### Fixed
+
+- Preserve a newer long-video focus epoch when an older in-flight window finishes.
+- Hard-cap ProgressivePack prefetch to one adjacent window even if a caller requests more.
+- Remove DSH/DeepSeek from the default VideoPack builder; unresolved senses remain provisional.
+- Add an explicit OpenAI-compatible GPT adapter without reusing Hermes/Codex credentials.
+- Make public CI distinguish four intentionally private-media audits from distributable tests.
+- Remove private fixture assumptions from context, ProgressivePack and subtitle-first browser contracts.
+
+### Verified
+
+- A tracked-files-only export passes 156 unit tests with four declared private-fixture skips.
+- Standalone and closed-shadow browser contracts pass from that public export.
+- Anonymous real YouTube currently returns `LOGIN_REQUIRED`; signed-in Chrome remains an explicit release gate.
+
 ## 0.2.3 — 2026-09-04
 
 ### Standalone captions

@@ -6,6 +6,10 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+PRIVATE_MEDIA_ROOT = ROOT.parent / "mechanism-experiment"
+PRIVATE_PHRASE_AUDIT = ROOT / "data" / "phrase-material-audit.json"
+PRIVATE_PROBE_AUDIT = ROOT / "data" / "probe-material-audit.json"
+PRIVATE_ALIGNMENT_AUDIT = ROOT / "data" / "alignment-audit.json"
 
 
 class ContentIntegrityTests(unittest.TestCase):
@@ -24,6 +28,7 @@ class ContentIntegrityTests(unittest.TestCase):
             qualities[item["alignment_quality"]] += 1
         self.assertEqual(qualities, {"word_timestamp_high": 14, "manifest_fallback_wide": 2})
 
+    @unittest.skipUnless(PRIVATE_PHRASE_AUDIT.is_file() and PRIVATE_MEDIA_ROOT.is_dir(), "private audited audio fixture is not distributed")
     def test_phrase_text_translation_and_audio_are_locked_together(self):
         content = {item["id"]: item for item in json.loads((ROOT / "content.json").read_text(encoding="utf-8"))["items"]}
         audit = json.loads((ROOT / "data" / "phrase-material-audit.json").read_text(encoding="utf-8"))
@@ -38,6 +43,7 @@ class ContentIntegrityTests(unittest.TestCase):
             self.assertEqual(row["display_zh"], item["phrase_zh"])
             self.assertEqual(hashlib.sha256(audio_path.read_bytes()).hexdigest(), row["sha256"])
 
+    @unittest.skipUnless((PRIVATE_MEDIA_ROOT / "stimuli.json").is_file(), "private sentence-boundary fixture is not distributed")
     def test_pause_anchors_follow_sentence_boundaries(self):
         content = json.loads((ROOT / "content.json").read_text(encoding="utf-8"))
         stimuli = json.loads((ROOT.parent / "mechanism-experiment" / "stimuli.json").read_text(encoding="utf-8"))
@@ -49,6 +55,7 @@ class ContentIntegrityTests(unittest.TestCase):
         for item in content["items"]:
             self.assertAlmostEqual(float(item["anchor_sec"]), expected[item["id"]], places=2)
 
+    @unittest.skipUnless(PRIVATE_PROBE_AUDIT.is_file() and PRIVATE_MEDIA_ROOT.is_dir(), "private probe audio audit is not distributed")
     def test_followup_probe_material_is_complete_and_audited(self):
         content = json.loads((ROOT / "content.json").read_text(encoding="utf-8"))
         audit_path = ROOT / "data" / "probe-material-audit.json"
@@ -81,6 +88,7 @@ class ContentIntegrityTests(unittest.TestCase):
         self.assertEqual(thermal["phrase_audio"], "media/phrases/thermal-signatures-clause.mp3")
         self.assertEqual(thermal["phrase_duration_sec"], 4.64)
 
+    @unittest.skipUnless(PRIVATE_ALIGNMENT_AUDIT.is_file(), "private alignment audit is not distributed")
     def test_alignment_audit_found_every_target(self):
         audit = json.loads((ROOT / "data" / "alignment-audit.json").read_text(encoding="utf-8"))
         self.assertEqual(len(audit), 16)

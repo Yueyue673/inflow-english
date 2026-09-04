@@ -608,28 +608,40 @@ class ProgressiveVideoPackBuilder:
         selected = next(row for row in manifest["windows"] if row["window_id"] == selected_id)
         selected["status"] = "running"
         selected["started_at"] = _iso(self.clock())
-        manifest["updated_at"] = selected["started_at"]
+        build_started_at = selected["started_at"]
+        manifest["updated_at"] = build_started_at
         atomic_write_json(self.manifest_path(pack_id), manifest)
+        result_status = "pending"
+        result_candidate_count = 0
+        result_error: str | None = None
         try:
             shard = self._build_window(manifest, selected, cancelled=cancelled)
-            selected["status"] = shard["status"]
-            selected["candidate_count"] = len(shard.get("candidates") or [])
-            selected["error_code"] = None
-            selected["completed_at"] = _iso(self.clock())
+            result_status = str(shard["status"])
+            result_candidate_count = len(shard.get("candidates") or [])
         except BuildCancelled:
-            selected["status"] = "pending"
-            selected["error_code"] = None
-            atomic_write_json(self.manifest_path(pack_id), manifest)
+            latest = self.load(pack_id)
+            latest_selected = next(row for row in latest["windows"] if row["window_id"] == selected_id)
+            if latest_selected.get("status") == "running" and latest_selected.get("started_at") == build_started_at:
+                latest_selected["status"] = "pending"
+                latest_selected["error_code"] = None
+                atomic_write_json(self.manifest_path(pack_id), latest)
             raise
         except VideoPackError as exc:
-            selected["status"] = "failed"
-            selected["candidate_count"] = 0
-            selected["error_code"] = str(exc).split(":", 1)[0][:120]
-            selected["completed_at"] = _iso(self.clock())
-        manifest["revision"] = int(manifest.get("revision", 0)) + 1
-        self._refresh_summary(manifest)
-        atomic_write_json(self.manifest_path(pack_id), manifest)
-        return manifest
+            result_status = "failed"
+            result_error = str(exc).split(":", 1)[0][:120]
+        latest = self.load(pack_id)
+        latest_selected = next(row for row in latest["windows"] if row["window_id"] == selected_id)
+        # A concurrent seek may have advanced focus/revision while the window was
+        # building. Merge only this window's terminal result into the latest
+        # manifest; never write the stale focus snapshot back.
+        latest_selected["status"] = result_status
+        latest_selected["candidate_count"] = result_candidate_count
+        latest_selected["error_code"] = result_error
+        latest_selected["completed_at"] = _iso(self.clock()) if result_status in TERMINAL_WINDOW_STATES else None
+        latest["revision"] = int(latest.get("revision", 0)) + 1
+        self._refresh_summary(latest)
+        atomic_write_json(self.manifest_path(pack_id), latest)
+        return latest
 
     def build_all(self, pack_id: str, *, cancelled: Callable[[], bool] | None = None, on_revision: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
         while True:
@@ -649,7 +661,7 @@ class ProgressiveVideoPackBuilder:
         cancelled: Callable[[], bool] | None = None,
         on_revision: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
-        ahead = max(0, min(2, int(prefetch_ahead)))
+        ahead = max(0, min(1, int(prefetch_ahead)))
         while True:
             manifest = self.recover(pack_id)
             if cancelled and cancelled():

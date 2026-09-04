@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "InFlow English",
-  "version": "0.2.3",
-  "description": "在你本来要看的 YouTube 视频里，低打扰地听懂少量原声表达。",
+  "version": "0.2.4",
+  "description": "在英语 YouTube 视频里快速显示中英字幕，按 S 重听当前完整句；字幕失败时原视频照常播放。",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",

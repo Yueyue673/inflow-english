@@ -1,4 +1,4 @@
-# Verification record — InFlow English 0.2.3
+# Verification record — InFlow English 0.2.4
 
 _Verified: 2026-09-04. This file records observed engineering results, not learning-effect claims._
 
@@ -6,7 +6,7 @@ _Verified: 2026-09-04. This file records observed engineering results, not learn
 
 ```text
 product              inflow-english
-extension             0.2.3
+extension             0.2.4
 policy                adaptive-v5
 profile schema         3
 reducer               rules-v5
@@ -19,12 +19,14 @@ Production active learning for long videos remains disabled.
 
 ## Clean-environment unit suite
 
-A fresh CPython 3.11 virtual environment was created from `requirements/ci.txt`, Open English WordNet 2024 was installed, and the repository suite was run without the Hermes development environment's extra packages.
+A fresh CPython 3.11 virtual environment was created from `requirements/ci.txt`, Open English WordNet 2024 was installed, and the staged Git index was exported to a new directory containing **only tracked public files**. The suite was run from that export.
 
 ```text
-Ran 154 tests in 20.022s
-OK
+Ran 156 tests in 19.592s
+OK (skipped=4)
 ```
+
+The four explicit skips are private-media human/audit fixtures that are intentionally excluded from the repository. Their public synthetic contracts remain covered; the private copies also pass on the development machine.
 
 The suite covers:
 
@@ -50,11 +52,11 @@ All browser contracts used isolated temporary profiles and data directories, a r
 ### Standalone captions — no localhost permission
 
 ```text
-host visible              144 ms
-bilingual caption ready   486 ms
-missing-track error       4089 ms
-retry after recovery      21 ms
-same-document SPA switch  100 ms
+host visible              123 ms
+bilingual caption ready   725 ms
+missing-track error       4068 ms
+retry after recovery      22 ms
+same-document SPA switch  74 ms
 status geometry           124.94 × 32 px
 ```
 
@@ -116,7 +118,7 @@ full video stored              false
 page / worker errors           0 / 0
 ```
 
-This verifies current-window publication, one adjacent-window delta and no full-video artifact in the isolated fixture. It does not prove current real-YouTube long-video transport.
+This verifies current-window publication, one adjacent-window delta, no full-video artifact, a hard one-window prefetch cap, and that an in-flight old window cannot overwrite a newer seek focus epoch. It does not prove current real-YouTube long-video transport.
 
 ### Subtitle-before-learning timing
 
@@ -158,8 +160,8 @@ A complete pre-migration copy was created under the ignored local `data/backups/
 `python tools/build_extension.py --output-dir dist` produced an exact 11-file allowlist archive:
 
 ```text
-InFlow-English-Chrome-0.2.3.zip
-SHA-256 46720b82985a67c246ccbe0a8a320d7f1bc2e442b0764f2e89dd90b47bfab010
+InFlow-English-Chrome-0.2.4.zip
+SHA-256 63735a104d2aa05a83432f6d1b71c62e31ba8534a5dd418fa2e94a004826f490
 ```
 
 Archive verification returned no bad member. Its manifest exactly matched `extension/manifest.json`:
@@ -202,7 +204,7 @@ The user's signed-in Chrome is the required final environment, but exact DevTool
 
 Therefore these release gates remain open:
 
-- one signed-in, ordinary `/watch?v=` first-state/first-caption timing run with 0.2.3;
+- one signed-in, ordinary `/watch?v=` first-state/first-caption timing run with 0.2.4;
 - a representative real-video matrix;
 - real long-video 60 s / 5220 s transport after a lawful, non-cookie-dependent source path;
 - Chrome Web Store approval;

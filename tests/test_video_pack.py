@@ -1139,14 +1139,14 @@ class SubprocessBoundaryTests(unittest.TestCase):
                 raise subprocess.TimeoutExpired(args, kwargs["timeout"])
             return subprocess.CompletedProcess(args, 0, stdout=json.dumps(payload, ensure_ascii=False), stderr="")
 
-        translator = DshTranslator(runner=runner, timeout_sec=7.5)
+        translator = DshTranslator(runner=runner, timeout_sec=7.5, patch_path="fixture-dsh.patch.yml")
         result = translator.translate(cues)
         self.assertEqual(result, payload)
         self.assertEqual(len(calls), 2)
         for args, kwargs in calls:
             self.assertEqual(args[:3], ["dsh", "--profile", "headless"])
             self.assertIn("--patch", args)
-            self.assertTrue(str(args[args.index("--patch") + 1]).endswith("dsh-translation.patch.yml"))
+            self.assertTrue(str(args[args.index("--patch") + 1]).endswith("fixture-dsh.patch.yml"))
             self.assertEqual(kwargs["timeout"], 7.5)
             self.assertEqual(kwargs["creationflags"], CREATE_NO_WINDOW)
             self.assertFalse(kwargs["check"])

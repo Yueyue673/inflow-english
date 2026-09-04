@@ -173,6 +173,42 @@ class ProgressivePackTests(unittest.TestCase):
             self.assertLessEqual(selected["ownership_start_sec"], 1400)
             self.assertGreater(selected["ownership_end_sec"], 1400)
 
+    def test_inflight_window_completion_cannot_overwrite_new_focus_epoch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            builder = self.make_builder(Path(temporary) / "packs")
+            manifest = builder.initialize(VIDEO_URL, caption_document(), playhead_sec=10)
+            original_window = next(row["window_id"] for row in manifest["windows"] if row["ownership_start_sec"] <= 10 < row["ownership_end_sec"])
+
+            def finish_after_seek(_manifest, _window, *, cancelled=None):
+                builder.set_focus(manifest["pack_id"], playhead_sec=1400, focus_epoch=2)
+                return {"status": "ready_no_candidate", "candidates": []}
+
+            builder._build_window = finish_after_seek
+            merged = builder.build_one(manifest["pack_id"])
+            self.assertEqual(merged["focus"]["focus_epoch"], 2)
+            self.assertEqual(merged["focus"]["playhead_sec"], 1400)
+            self.assertEqual(next(row for row in merged["windows"] if row["window_id"] == original_window)["status"], "ready_no_candidate")
+
+            selected = []
+
+            def record_new_focus(_manifest, window, *, cancelled=None):
+                selected.append(window["window_id"])
+                return {"status": "ready_no_candidate", "candidates": []}
+
+            builder._build_window = record_new_focus
+            final = builder.build_one(manifest["pack_id"])
+            focused = next(row for row in final["windows"] if row["ownership_start_sec"] <= 1400 < row["ownership_end_sec"])
+            self.assertEqual(selected, [focused["window_id"]])
+
+    def test_prefetch_request_is_hard_clamped_to_one_adjacent_window(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            builder = self.make_builder(Path(temporary) / "packs")
+            manifest = builder.initialize(VIDEO_URL, caption_document(), playhead_sec=1000)
+            result = builder.build_until_horizon(manifest["pack_id"], prefetch_ahead=99)
+            ready = [row for row in result["windows"] if row["status"] in {"ready", "ready_no_candidate"}]
+            self.assertEqual(len(ready), 2)
+            self.assertEqual([row["window_id"] for row in ready], ["w0002", "w0003"])
+
     def test_worker_stops_after_focus_window_and_one_prefetch(self):
         with tempfile.TemporaryDirectory() as temporary:
             builder = self.make_builder(Path(temporary) / "packs")

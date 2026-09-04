@@ -16,14 +16,14 @@ It does **not** wait for Python, `yt-dlp`, ASR or a model before showing caption
 
 The current release is a **public source alpha**, not yet a Chrome Web Store listing.
 
-1. Download `InFlow-English-Chrome-0.2.3.zip` and its checksum from the matching [GitHub Release](https://github.com/Yueyue673/inflow-english/releases).
+1. Download `InFlow-English-Chrome-0.2.4.zip` and its checksum from the matching [GitHub Release](https://github.com/Yueyue673/inflow-english/releases).
 2. Extract it into a stable folder.
 3. Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select that folder.
 4. Open an ordinary English YouTube watch page and refresh already-open tabs once.
 
 A visible InFlow status should appear near the video within one second. See the full [installation and update guide](docs/INSTALL.md).
 
-> One-click installation and automatic extension updates require Chrome Web Store approval. The listing assets are prepared, but approval is an external release gate and has not happened yet.
+> One-click installation and automatic extension updates require Chrome Web Store approval. Listing assets are prepared under [`store/`](store/), and the remaining account-owner path is documented in [`store/SUBMISSION.md`](store/SUBMISSION.md); approval has not happened yet.
 
 ## What the standalone extension does
 
@@ -129,7 +129,7 @@ See [Contributing](CONTRIBUTING.md) and [Troubleshooting](docs/TROUBLESHOOTING.m
 
 ## Release status
 
-- Extension: `0.2.3`
+- Extension: `0.2.4`
 - Adaptive policy: `adaptive-v5`
 - Profile schema: `3`
 - Reducer: `rules-v5`

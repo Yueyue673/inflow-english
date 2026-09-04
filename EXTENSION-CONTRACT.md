@@ -3,7 +3,7 @@
 ## Identity
 
 - Manifest V3
-- Version `0.2.3`
+- Version `0.2.4`
 - Minimum Chrome `120`
 - Fixed development ID `hfkkhkdpakcmpokgbihceoppleeokifd`
 - Required permission: `storage`
