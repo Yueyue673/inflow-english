@@ -3,8 +3,11 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import subprocess
+import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -19,7 +22,7 @@ class ExtensionContractTests(unittest.TestCase):
 
     def test_manifest_v3_has_stable_id_and_minimal_permissions(self):
         self.assertEqual(self.manifest["manifest_version"], 3)
-        self.assertEqual(self.manifest["version"], "0.2.5")
+        self.assertEqual(self.manifest["version"], "0.2.6")
         public_key = base64.b64decode(self.manifest["key"], validate=True)
         alphabet = "abcdefghijklmnop"
         extension_id = "".join(alphabet[byte >> 4] + alphabet[byte & 15] for byte in hashlib.sha256(public_key).digest()[:16])
@@ -41,6 +44,56 @@ class ExtensionContractTests(unittest.TestCase):
         self.assertEqual(self.manifest["content_scripts"][1]["run_at"], "document_start")
         forbidden = {"cookies", "downloads", "webRequest", "nativeMessaging", "clipboardRead", "clipboardWrite", "<all_urls>"}
         self.assertFalse(forbidden.intersection(self.manifest["permissions"] + self.manifest["host_permissions"]))
+
+    def test_release_builder_separates_development_and_first_store_upload_keys(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            development = subprocess.run(
+                ["python", "tools/build_extension.py", "--output-dir", str(output)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                creationflags=CREATE_NO_WINDOW,
+            )
+            store = subprocess.run(
+                ["python", "tools/build_extension.py", "--output-dir", str(output), "--store-first-upload"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                creationflags=CREATE_NO_WINDOW,
+            )
+            self.assertEqual(development.returncode, 0, development.stderr)
+            self.assertEqual(store.returncode, 0, store.stderr)
+            development_path = Path(json.loads(development.stdout)["archive"])
+            store_path = Path(json.loads(store.stdout)["archive"])
+            with zipfile.ZipFile(development_path) as archive:
+                development_manifest = json.loads(archive.read("manifest.json"))
+            with zipfile.ZipFile(store_path) as archive:
+                store_manifest = json.loads(archive.read("manifest.json"))
+            self.assertIn("key", development_manifest)
+            self.assertNotIn("key", store_manifest)
+            expected_store_manifest = dict(development_manifest)
+            expected_store_manifest.pop("key")
+            self.assertEqual(store_manifest, expected_store_manifest)
+            self.assertTrue(store_path.name.endswith("-CWS-first-upload.zip"))
+
+    def test_store_assets_are_full_bleed_and_privacy_draft_discloses_local_data(self):
+        pairs = [
+            (ROOT / "store" / "assets" / "01-bilingual-captions.png", ROOT / "docs" / "images" / "youtube-subtitles.png"),
+            (ROOT / "store" / "assets" / "02-learning-card.png", ROOT / "docs" / "images" / "learning-card.png"),
+        ]
+        for store_path, source_path in pairs:
+            payload = store_path.read_bytes()
+            self.assertEqual(payload, source_path.read_bytes())
+            self.assertEqual(payload[:8], b"\x89PNG\r\n\x1a\n")
+            self.assertEqual((int.from_bytes(payload[16:20], "big"), int.from_bytes(payload[20:24], "big")), (1280, 800))
+        listing = (ROOT / "store" / "LISTING.md").read_text(encoding="utf-8")
+        popup = (EXTENSION / "popup.html").read_text(encoding="utf-8")
+        self.assertNotIn("Web history: not collected", listing)
+        for disclosure in ("Web history: collected for core functionality", "User activity: collected for core functionality", "Website content: collected for core functionality", "默认使用离线翻译", "当前视频 URL"):
+            self.assertIn(disclosure, listing + popup)
 
     def test_manifest_references_real_files_and_all_scripts_parse(self):
         paths = [
@@ -70,16 +123,59 @@ class ExtensionContractTests(unittest.TestCase):
             'location.pathname !== "/watch"',
             'url.pathname !== "/api/timedtext"',
             "MAX_BYTES = 5_000_000",
+            "MAX_EVENTS = 50_000",
             "MAX_ENTRIES = 6",
             "TTL_MS = 120_000",
-            "response.clone().arrayBuffer()",
+            "response.clone()",
+            "clone.body?.getReader",
+            "total > MAX_BYTES",
+            "await reader.cancel()",
             'source: "inflow-caption-cache-response"',
             "entries.length > MAX_ENTRIES",
         ):
             self.assertIn(required, source)
         self.assertNotIn("document.cookie", source)
+        self.assertNotIn("response.clone().arrayBuffer()", source)
         self.assertNotIn("chrome.", source)
         self.assertNotIn("127.0.0.1", source)
+
+    def test_main_world_hook_cancels_oversized_fetch_clone_before_buffering(self):
+        source = (EXTENSION / "page-hook.js").read_text(encoding="utf-8")
+        harness = """
+        global.location = { pathname:'/watch', href:'https://www.youtube.com/watch?v=abcdefghijk', origin:'https://www.youtube.com' };
+        global.listeners = [];
+        global.sent = null;
+        global.cancelled = false;
+        global.window = global;
+        global.addEventListener = (type, listener) => { if (type === 'message') listeners.push(listener); };
+        global.postMessage = (payload) => { if (payload?.source === 'inflow-caption-cache-response') global.sent = payload; };
+        class FakeXHR { addEventListener() {} }
+        FakeXHR.prototype.open = function() {};
+        FakeXHR.prototype.send = function() {};
+        global.XMLHttpRequest = FakeXHR;
+        global.fetch = async () => ({
+          url:'https://www.youtube.com/api/timedtext?v=abcdefghijk&lang=en',
+          ok:true,
+          headers:{ get:() => null },
+          clone:() => ({ body:{ getReader:() => {
+            let sent=false;
+            return {
+              read:async () => sent ? {done:true} : (sent=true, {done:false,value:new Uint8Array(5_000_001)}),
+              cancel:async () => { global.cancelled=true; },
+            };
+          } } }),
+        });
+        """ + source + """
+        fetch('https://www.youtube.com/api/timedtext?v=abcdefghijk&lang=en');
+        setTimeout(() => {
+          const event={ source:window, origin:location.origin, data:{source:'inflow-caption-cache-request',nonce:'12345678-1234-1234-1234-123456789abc',video_id:'abcdefghijk'} };
+          listeners.forEach(listener => listener(event));
+          setTimeout(() => process.stdout.write(JSON.stringify({cancelled:global.cancelled,entries:global.sent?.entries?.length})), 10);
+        }, 80);
+        """
+        result = subprocess.run(["node", "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=5, creationflags=CREATE_NO_WINDOW)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {"cancelled": True, "entries": 0})
 
     def test_service_worker_is_bounded_not_an_arbitrary_localhost_proxy(self):
         source = (EXTENSION / "service-worker.js").read_text(encoding="utf-8")
@@ -106,6 +202,7 @@ class ExtensionContractTests(unittest.TestCase):
         self.assertIn("youtube_top_frame_required", source)
         self.assertIn("sender_video_mismatch", source)
         self.assertIn("chrome.storage.session", source)
+        self.assertIn('source === "subtitle" ? ["known", "familiar", "unclear", "undo"]', source)
         self.assertIn("owner:${documentId}", source)
         self.assertIn("setTimeout(() => controller.abort(), 3000)", source)
         self.assertNotIn("chrome.cookies", source)
@@ -123,6 +220,8 @@ class ExtensionContractTests(unittest.TestCase):
             "interactionComplete",
             "activeInteraction.pauseOwned",
             'id="continueLearning"',
+            'id="skipMapping"',
+            'finalizeInteraction("skipped", "user_skip_mapping")',
             'id="suppressSense"',
             "explicit_no_more_explanations",
             "看清了，继续",
@@ -171,11 +270,19 @@ class ExtensionContractTests(unittest.TestCase):
             "syncVideoBounds",
             "--video-center-x",
             "displaySize",
+            'host.dataset.dock = sideSpace >= 320',
+            'host.dataset.videoVisible = "false"',
+            'host.dataset.videoVisible === "true"',
+            'activeInteraction.pauseOwned = false',
+            'finalizeInteraction("technical_failure", "player_not_visible")',
+            'id="wordOutcome"',
+            'id="wordUndo"',
             "lexiconFeedback",
             "contextFingerprint",
             "context_fingerprints",
             "140ms",
             "yt-navigate-finish",
+            'subtitleState !== "idle" || nativeCaptionsOwned',
             "document.hidden",
             "inAd()",
         ):
@@ -197,6 +304,13 @@ class ExtensionContractTests(unittest.TestCase):
         self.assertIn('performance.getEntriesByType("resource")', bridge)
         self.assertIn('reject(new Error("youtube_caption_fetch_timeout"))', bridge)
         self.assertIn("Promise.race([operation, hardTimeout])", bridge)
+        self.assertNotIn("waitForObservedTimedTextUrl", bridge)
+        constants = {
+            name: int(re.search(rf"const {name} = ([0-9_]+);", bridge).group(1).replace("_", ""))
+            for name in ("CAPTURE_CACHE_WAIT_MS", "TRACK_SWITCH_WAIT_MS", "GET_OPTION_RETRY_MS", "FETCH_TIMEOUT_MS")
+        }
+        worst_case_ms = constants["CAPTURE_CACHE_WAIT_MS"] * 3 + constants["TRACK_SWITCH_WAIT_MS"] * 2 + constants["GET_OPTION_RETRY_MS"] + constants["FETCH_TIMEOUT_MS"]
+        self.assertLess(worst_case_ms, 4000)
         self.assertNotIn("chrome.cookies", bridge)
         harness = """
         global.sent = null;
@@ -215,13 +329,14 @@ class ExtensionContractTests(unittest.TestCase):
             }
           },
         };
-        global.location = { origin: 'https://www.youtube.com' };
+        global.location = { origin: 'https://www.youtube.com', href: 'https://www.youtube.com/watch?v=abcdefghijk' };
         const currentScript = { dataset: { inflowNonce: '12345678-1234-1234-1234-123456789abc', inflowVideoId: 'abcdefghijk' }, remove() {} };
-        const response = { videoDetails: { videoId: 'abcdefghijk', title: 'Fixture', lengthSeconds: '60' }, captions: { playerCaptionsTracklistRenderer: { captionTracks: [{ baseUrl: 'https://www.youtube.com/api/timedtext?v=abcdefghijk&lang=en', languageCode: 'en', isTranslatable: true }] } } };
+        const response = { videoDetails: { videoId: 'abcdefghijk', title: 'Fixture', lengthSeconds: '14400' }, captions: { playerCaptionsTracklistRenderer: { captionTracks: [{ baseUrl: 'https://www.youtube.com/api/timedtext?v=abcdefghijk&lang=en', languageCode: 'en', isTranslatable: true }] } } };
         global.resourceEntries = [{ name: 'https://www.youtube.com/api/timedtext?v=abcdefghijk&lang=en&pot=proof&tlang=zh' }];
+        global.getOptionCalls = 0;
         const player = {
           getPlayerResponse: () => response,
-          getOption: () => ({ languageCode: 'en', translationLanguage: { languageCode: 'zh' } }),
+          getOption: () => { global.getOptionCalls += 1; if (global.getOptionCalls === 1) throw new Error('captions_not_ready'); return { languageCode: 'en', translationLanguage: { languageCode: 'zh' } }; },
           setOption: (_module, _name, value) => {
             if (value?.languageCode === 'en' && !value?.translationLanguage) global.resourceEntries.push({ name: 'https://www.youtube.com/api/timedtext?v=abcdefghijk&lang=en&pot=proof' });
           },
@@ -256,6 +371,38 @@ class ExtensionContractTests(unittest.TestCase):
         self.assertTrue(any("tlang" not in query for query in queries))
         self.assertTrue(any(query.get("tlang") == ["zh-Hans"] for query in queries))
 
+    def test_page_bridge_never_restores_an_old_track_after_spa_navigation(self):
+        bridge = (EXTENSION / "page-bridge.js").read_text(encoding="utf-8")
+        harness = """
+        global.messages=[]; global.messageListeners=new Set();
+        global.location={origin:'https://www.youtube.com',href:'https://www.youtube.com/watch?v=abcdefghijk'};
+        global.window={
+          addEventListener:(type,listener)=>{if(type==='message')global.messageListeners.add(listener)},
+          removeEventListener:(type,listener)=>{if(type==='message')global.messageListeners.delete(listener)},
+          postMessage:(payload)=>{
+            if(payload?.source==='inflow-caption-cache-request') queueMicrotask(()=>[...global.messageListeners].forEach(listener=>listener({source:global.window,origin:global.location.origin,data:{source:'inflow-caption-cache-response',nonce:payload.nonce,video_id:payload.video_id,entries:[]}})));
+            else global.messages.push(payload);
+          }
+        };
+        const currentScript={dataset:{inflowNonce:'12345678-1234-1234-1234-123456789abc',inflowVideoId:'abcdefghijk'},remove(){}};
+        const tracks=[{baseUrl:'https://www.youtube.com/api/timedtext?v=abcdefghijk&lang=en',languageCode:'en',isTranslatable:true}];
+        let response={videoDetails:{videoId:'abcdefghijk',title:'A',lengthSeconds:'60'},captions:{playerCaptionsTracklistRenderer:{captionTracks:tracks}}};
+        let currentTrack={languageCode:'es',route:'A'}; const setCalls=[];
+        const player={getPlayerResponse:()=>response,getOption:()=>currentTrack,setOption:(_m,_n,value)=>{currentTrack=value;setCalls.push({at:Date.now(),value})}};
+        global.document={currentScript,querySelector:(selector)=>selector==='#movie_player'?player:{duration:60}};
+        global.performance={getEntriesByType:()=>[]};
+        const bytes=new TextEncoder().encode(JSON.stringify({events:[{tStartMs:0,dDurationMs:1000,segs:[{utf8:'A'}]}]}));
+        global.fetch=async()=>({ok:true,status:200,headers:{get:()=>String(bytes.byteLength)},body:{getReader:()=>{let sent=false;return{read:async()=>sent?{done:true}:(sent=true,{done:false,value:bytes})}}}});
+        setTimeout(()=>{global.location.href='https://www.youtube.com/watch?v=lmnopqrstuv';response={videoDetails:{videoId:'lmnopqrstuv',title:'B',lengthSeconds:'60'}};currentTrack={languageCode:'fr',route:'B'}},100);
+        """ + bridge + "\nsetTimeout(()=>process.stdout.write(JSON.stringify({currentTrack,setCalls,messages:global.messages})),900);"
+        result = subprocess.run(["node", "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=5, creationflags=CREATE_NO_WINDOW)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual(output["currentTrack"], {"languageCode": "fr", "route": "B"})
+        self.assertEqual(len(output["setCalls"]), 1)
+        self.assertFalse(output["messages"][-1]["ok"])
+        self.assertEqual(output["messages"][-1]["error"], "youtube_player_video_mismatch")
+
     def test_startup_status_is_visible_without_hover(self):
         source = (EXTENSION / "content-script.js").read_text(encoding="utf-8")
         self.assertIn("min-width:118px", source)
@@ -264,6 +411,169 @@ class ExtensionContractTests(unittest.TestCase):
         self.assertNotIn("width:10px", source)
         self.assertNotIn("font-size:0", source)
         self.assertNotIn("color:transparent", source)
+
+    def test_concurrent_same_surface_lookups_cannot_mix_context_identity(self):
+        source = (EXTENSION / "content-script.js").read_text(encoding="utf-8")
+        start = source.index("async function openWordPanel")
+        end = source.index("\n\n  async function saveWordFeedback", start)
+        function = source[start:end]
+        script = """
+        let activeInteraction=false,currentCaptionCue=null,selectedWord=null,wordSelectionGeneration=0,panelOpen=false;
+        const wordSurface={},wordGloss={},wordPanel={hidden:true},wordUndo={hidden:true,disabled:false},wordFeedbackControls=[],wordOutcome={hidden:true};
+        function renderStatus(){} function showWordStatus(){} function setWordFeedbackBusy(){}
+        const pending={};
+        function callWorker(payload){return new Promise(resolve=>{pending[payload.sentence]=resolve})}
+        const button=()=>({dataset:{surface:'bank',status:'unseen',knowledgeKey:'',glossZh:''}});
+        """ + function + """
+        (async()=>{
+          currentCaptionCue={text:'They sat beside the river bank.'}; const first=openWordPanel(button());
+          currentCaptionCue={text:'She called the bank about her account.'}; const second=openWordPanel(button());
+          pending['They sat beside the river bank.']({knowledge_key:'KEY_RIVER',gloss_zh:'河岸',status:'unseen'}); await first;
+          const afterFirst={...selectedWord};
+          pending['She called the bank about her account.']({knowledge_key:'KEY_ACCOUNT',gloss_zh:'银行',status:'unseen'}); await second;
+          process.stdout.write(JSON.stringify({afterFirst,final:selectedWord}));
+        })();
+        """
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=5, creationflags=CREATE_NO_WINDOW)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual(output["afterFirst"]["sentence"], "She called the bank about her account.")
+        self.assertNotEqual(output["afterFirst"].get("knowledge_key"), "KEY_RIVER")
+        self.assertEqual(output["final"]["knowledge_key"], "KEY_ACCOUNT")
+        self.assertEqual(output["final"]["sentence"], "She called the bank about her account.")
+
+    def test_stale_activation_cannot_start_prepare_or_replace_closed_message(self):
+        source = (EXTENSION / "content-script.js").read_text(encoding="utf-8")
+        start = source.index("function activationIsCurrent")
+        end = source.index("\n\n  async function stopLearning", start)
+        functions = source[start:end]
+        script = """
+        let enabled=false,preparing=false,manualDisabledVideoId=null,videoId='abcdefghijk',routeGeneration=0,panelOpen=false,profile=null,session=null,importJob=null;
+        let currentId='abcdefghijk',message='',listCalls=0,prepareCalls=0,bootstrapResolve;
+        const video={currentTime:12,paused:false};
+        function currentVideoId(){return currentId} function canonicalUrl(){return 'https://www.youtube.com/watch?v=abcdefghijk'}
+        function sourceVideo(){return video} function cancelAutoEnable(){} function renderStatus(){}
+        function setMessage(value){message=value} function publicState(){return {enabled,preparing,message,importJob}}
+        async function ensureSubtitleFirst(){return true}
+        function callWorker(payload){
+          if(payload.type==='bootstrap') return new Promise(resolve=>{bootstrapResolve=resolve});
+          if(payload.type==='listPacks'){listCalls+=1;return Promise.resolve({packs:[]})}
+          if(payload.type==='prepare'){prepareCalls+=1;return Promise.resolve({job_id:'queued'})}
+          throw new Error('unexpected:'+payload.type);
+        }
+        """ + functions + """
+        (async()=>{
+          const activation=activate({quiet:true});
+          while(!bootstrapResolve) await new Promise(resolve=>setImmediate(resolve));
+          routeGeneration+=1;preparing=false;manualDisabledVideoId=videoId;message='当前视频的 InFlow 已暂停';
+          bootstrapResolve({profile:{},packs:{packs:[]}});
+          await activation;
+          process.stdout.write(JSON.stringify({listCalls,prepareCalls,message,importJob,preparing,enabled}));
+        })();
+        """
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=5, creationflags=CREATE_NO_WINDOW)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual(output["listCalls"], 0)
+        self.assertEqual(output["prepareCalls"], 0)
+        self.assertEqual(output["message"], "当前视频的 InFlow 已暂停")
+        self.assertIsNone(output["importJob"])
+        self.assertFalse(output["preparing"])
+        self.assertFalse(output["enabled"])
+
+    def test_hidden_player_cannot_start_automatic_learning(self):
+        source = (EXTENSION / "content-script.js").read_text(encoding="utf-8")
+        start = source.index("function manageAutoEnable")
+        end = source.index("\n\n  function activationIsCurrent", start)
+        function = source[start:end]
+        script = """
+        let videoId='abcdefghijk',subtitleState='ready',autoMode=true,autoLearning=true,backendAvailable=true,learningRetryBlocked=false,sessionTakeoverRequired=false,manualDisabledVideoId=null,enabled=false,preparing=false,activeInteraction=null,subtitleActive=true,continuousPlaybackStartedAt=1000,autoEnableTimer=null,activateCalls=0;
+        const host={dataset:{videoVisible:'false'}}, video={paused:false,ended:false};
+        global.document={hidden:false}; global.performance={now:()=>10000};
+        function currentVideoId(){return 'abcdefghijk'} function observeAdState(){} function inAd(){return false}
+        function enableNativeCaptionBridge(){} function ensureSubtitleFirst(){} function sourceVideo(){return video} function attachVideo(){}
+        function cancelAutoEnable(){autoEnableTimer=null} function activate(){activateCalls+=1}
+        """ + function + "\nmanageAutoEnable();process.stdout.write(JSON.stringify({activateCalls,continuousPlaybackStartedAt,autoEnableTimer}));"
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=5, creationflags=CREATE_NO_WINDOW)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {"activateCalls": 0, "continuousPlaybackStartedAt": 0, "autoEnableTimer": None})
+
+    def test_stale_open_interaction_is_closed_without_familiarity_evidence(self):
+        source = (EXTENSION / "content-script.js").read_text(encoding="utf-8")
+        start = source.index("async function recoverStaleOpenInteraction")
+        end = source.index("\n\n  async function activate", start)
+        function = source[start:end]
+        script = """
+        let sent=null;
+        async function callWorker(payload){sent=payload;return {session_id:payload.session_id,stage:'watch',open_interaction:null};}
+        """ + function + """
+        const session={session_id:'a'.repeat(32),stage:'watch',owner_epoch:4,open_interaction:{item_id:'item-1',interaction_id:'b'.repeat(32)}};
+        Promise.all([recoverStaleOpenInteraction(session),recoverStaleOpenInteraction({...session,open_interaction:null})]).then(([recovered,unchanged])=>process.stdout.write(JSON.stringify({sent,recovered,unchangedSame:unchanged.open_interaction===null})));
+        """
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=5, creationflags=CREATE_NO_WINDOW)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["sent"]["type"], "interactionComplete")
+        self.assertEqual(payload["sent"]["outcome"], "technical_failure")
+        self.assertEqual(payload["sent"]["failure_reason"], "recovered_stale_interaction")
+        self.assertFalse(payload["sent"]["phrase_confirmed"])
+        self.assertNotIn("familiarity_feedback", payload["sent"])
+        self.assertIsNone(payload["recovered"]["open_interaction"])
+        self.assertTrue(payload["unchangedSame"])
+
+    def test_ad_transition_does_not_consume_the_only_subtitle_retry(self):
+        source = (EXTENSION / "content-script.js").read_text(encoding="utf-8")
+        start = source.index("function retryableSubtitleError")
+        end = source.index("\n\n  function attachVideo", start)
+        function = source[start:end]
+        script = """
+        let autoMode=true,subtitleActive=false,subtitleState='failed',lastSubtitleErrorCode='youtube_caption_tracks_missing',automaticSubtitleRetryVideoId=null,automaticSubtitleRetryAttempts=0,adActive=false,retries=0;
+        const video={paused:false};
+        function currentVideoId(){return 'abcdefghijk'} function inAd(){return adActive} function retrySubtitles(){retries+=1}
+        """ + function + """
+        scheduleAutomaticSubtitleRetry(video,'abcdefghijk');
+        const definitiveFailure={token:automaticSubtitleRetryVideoId,attempts:automaticSubtitleRetryAttempts,retries};
+        scheduleAutomaticSubtitleRetry(video,'abcdefghijk',{fromPlayEvent:true});
+        adActive=true;
+        setTimeout(()=>{
+          const duringAd={token:automaticSubtitleRetryVideoId,attempts:automaticSubtitleRetryAttempts,retries};
+          adActive=false;
+          scheduleAutomaticSubtitleRetry(video,'abcdefghijk',{fromPlayEvent:true});
+          setTimeout(()=>process.stdout.write(JSON.stringify({definitiveFailure,duringAd,afterContent:{token:automaticSubtitleRetryVideoId,attempts:automaticSubtitleRetryAttempts,retries}})),350);
+        },350);
+        """
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=5, creationflags=CREATE_NO_WINDOW)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["definitiveFailure"], {"token": None, "attempts": 0, "retries": 0})
+        self.assertEqual(payload["duringAd"], {"token": None, "attempts": 0, "retries": 0})
+        self.assertEqual(payload["afterContent"]["attempts"], 1)
+        self.assertEqual(payload["afterContent"]["retries"], 1)
+
+    def test_stopping_learning_restarts_a_stale_inflight_subtitle_task(self):
+        source = (EXTENSION / "content-script.js").read_text(encoding="utf-8")
+        start = source.index("async function stopLearning")
+        end = source.index("\n\n  async function disable", start)
+        function = source[start:end]
+        script = """
+        let subtitleTask=Promise.resolve('stale'),subtitleTaskVideoId='abcdefghijk',subtitleActive=false,subtitleState='loading',statusError=true;
+        let routeGeneration=0,importJob=null,preparing=false,activeInteraction=null,progressTimer=null,progressiveSyncTimer=null,focusEpoch=0,lastProgressiveFocusSec=null,enabled=false,session=null,continuousPlaybackStartedAt=0,suppressLearningUntilMediaTime=null,autoMode=true,videoId='abcdefghijk';
+        let restartCalls=0;
+        const audioCache=new Map();
+        function cancelAutoEnable(){} async function callWorker(){} async function finalizeInteraction(){} async function saveProgress(){}
+        function clearInterval(){} function hideOverlay(){} function stopMonitor(){} function startMonitor(){} function setMessage(){} function readyMessage(){return 'ready'} function waitingMessage(){return 'waiting'} function renderStatus(){} function publicState(){return {}}
+        function ensureSubtitleFirst(){restartCalls+=1;subtitleState='loading';return Promise.resolve();}
+        """ + function + """
+        stopLearning().then(()=>process.stdout.write(JSON.stringify({subtitleTask,subtitleTaskVideoId,subtitleState,restartCalls,routeGeneration})));
+        """
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=5, creationflags=CREATE_NO_WINDOW)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertIsNone(payload["subtitleTask"])
+        self.assertIsNone(payload["subtitleTaskVideoId"])
+        self.assertEqual(payload["subtitleState"], "loading")
+        self.assertEqual(payload["restartCalls"], 1)
+        self.assertEqual(payload["routeGeneration"], 1)
 
     def test_page_caption_alignment_never_concatenates_neighboring_chinese_rows(self):
         source = (EXTENSION / "content-script.js").read_text(encoding="utf-8")
@@ -299,11 +609,13 @@ class ExtensionContractTests(unittest.TestCase):
                 {"tStartMs": 2300, "dDurationMs": 1000, "segs": [{"utf8": "Next line"}]},
             ]
         }
-        script = f"{function_source}\nprocess.stdout.write(JSON.stringify(parsePageCaptionTrack({json.dumps(payload)},10,false,'en')));"
+        script = f"{function_source}\nconst normal=parsePageCaptionTrack({json.dumps(payload)},10,false,'en');const oversized=parsePageCaptionTrack({{events:Array.from({{length:50001}},()=>({{tStartMs:0,dDurationMs:1,segs:[{{utf8:'a'}}]}}))}},10,false,'en');process.stdout.write(JSON.stringify({{normal,oversized}}));"
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", creationflags=CREATE_NO_WINDOW)
         self.assertEqual(result.returncode, 0, result.stderr)
-        rows = json.loads(result.stdout)
+        output = json.loads(result.stdout)
+        rows = output["normal"]
         self.assertEqual([(row["start"], row["end"], row["text"]) for row in rows], [(1, 2.2, "Hello world"), (2.3, 3.3, "Next line")])
+        self.assertEqual(output["oversized"], [])
 
     def test_content_script_merges_rolling_caption_fragments(self):
         source = (EXTENSION / "content-script.js").read_text(encoding="utf-8")
@@ -348,7 +660,9 @@ class ExtensionContractTests(unittest.TestCase):
         self.assertIn("learningSettings", html)
         self.assertIn("字幕与学习卡大小", html)
         self.assertIn("只控制暂停密度；候选不足时会少做", html)
-        self.assertIn("inflow:activate", script)
+        self.assertNotIn('"inflow:activate"', script)
+        self.assertIn('"开启本视频"', script)
+        self.assertIn('"关闭本视频"', script)
         self.assertIn("inflow:retrySubtitles", script)
         self.assertIn("inflow:takeoverLearning", script)
         self.assertIn("autoLearning: false", script)

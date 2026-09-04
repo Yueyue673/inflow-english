@@ -3,7 +3,7 @@
 ## Identity
 
 - Manifest V3
-- Version `0.2.5`
+- Version `0.2.6`
 - Minimum Chrome `120`
 - Fixed development ID `hfkkhkdpakcmpokgbihceoppleeokifd`
 - Required permission: `storage`
@@ -24,9 +24,9 @@ The extension must remain useful when localhost is absent. Page-caption first pa
 
 ## Security boundary
 
-- `page-hook.js` runs at document start in MAIN world on `/watch` only, copies at most six valid player timed-text responses for two minutes, and never uses Chrome APIs or localhost.
+- `page-hook.js` installs once at document start in YouTube's MAIN world so Home/Search → watch SPA navigation remains covered. It copies responses only while the current route is `/watch`, keeps at most six valid player timed-text responses for two minutes, and never uses Chrome APIs or localhost.
 - `page-bridge.js` receives one nonce and one expected video ID.
-- It accepts only three exact YouTube hosts, `/api/timedtext`, 100 tracks, 8 KiB URLs, hard per-track deadlines and 5 MB streamed bytes.
+- It accepts only three exact YouTube hosts, `/api/timedtext`, 100 tracks, 8 KiB URLs, a 24-hour duration sanity bound, hard per-track deadlines, 5 MB streamed bytes and 50,000 caption events.
 - It may use YouTube same-origin credentials for a fallback request but never reads cookie values; redirects are rejected.
 - Production shadow mode is `closed`.
 - Persistent-write/playback-control handlers require trusted input.
@@ -41,7 +41,11 @@ The authoritative matrix is [`docs/STATE-MATRIX.md`](docs/STATE-MATRIX.md).
 
 Required behavior:
 
-- status is visibly sized without hover;
+- status is visibly sized without hover and docks beside the video when space exists;
+- `InFlow` surfaces hide when less than a usable portion of the player remains in the viewport and restore when the player returns;
+- status, word and teaching panels are mutually exclusive in the side dock;
+- `关闭本视频` and `开启本视频` are exact inverse actions in both page UI and popup;
+- subtitle word-state saves remain visible, explain their scheduling effect and offer append-only undo to the exact prior server-owned state;
 - ads show `等正片` or `已备好 · 等正片` and hide captions;
 - missing captions terminate within five seconds and offer retry;
 - disabling experimental learning preserves captions;
@@ -60,7 +64,7 @@ natural phrase audio
 → wait for 看清了，继续
 ```
 
-`再听一遍` is independent of familiarity. The optional no-more-explanations action is an explicit known override. There is no mandatory known/familiar/unclear gate.
+`再听一遍` is independent of familiarity. `以后跳过此义项` is an explicit known override. Subtitle word-state edits disclose their scheduling consequence, remain visible after save and can be undone. There is no mandatory known/familiar/unclear gate.
 
 ## Test seam
 

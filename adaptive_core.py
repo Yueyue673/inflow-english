@@ -23,10 +23,11 @@ INTENSITIES = ("low", "medium", "high")
 INTENSITY_RANK = {name: index for index, name in enumerate(INTENSITIES)}
 POLICY_VERSION = "adaptive-v5"
 PROFILE_SCHEMA_VERSION = 3
-REDUCER_VERSION = "rules-v5"
+REDUCER_VERSION = "rules-v6"
 PROBE_WINDOW_START_HOURS = 20
 PROBE_WINDOW_END_HOURS = 72
 FAMILIARITY_FEEDBACK = ("known", "familiar", "unclear")
+LEXICON_STATE_EDITS = (*FAMILIARITY_FEEDBACK, "undo")
 
 # Engineering priors, not claims of learning efficacy.  They control only how
 # often InFlow may interrupt the source task, measured against English speech
@@ -167,6 +168,7 @@ def seed_lexicon_state(
         "feedback_counts": {name: 0 for name in FAMILIARITY_FEEDBACK},
         "replay_count": 0,
         "last_feedback_at": None,
+        "state_edit_restore": None,
         "occurrence_ids": [],
         "context_fingerprints": [context_id] if context_id else [],
         "evidence": [],
@@ -273,7 +275,7 @@ def ensure_profile(profile: dict[str, Any], content: dict[str, Any]) -> dict[str
     profile = deepcopy(profile)
     profile["schema_version"] = PROFILE_SCHEMA_VERSION
     profile["policy_version"] = POLICY_VERSION
-    profile["reducer_version"] = REDUCER_VERSION
+    profile.setdefault("reducer_version", REDUCER_VERSION)
     profile.setdefault("explicit_intensity", "medium")
     profile.setdefault("adaptive", {})
     adaptive = profile["adaptive"]
@@ -760,7 +762,7 @@ def apply_lexicon_feedback(
     now: datetime | None = None,
     policy_version: str = POLICY_VERSION,
 ) -> dict[str, Any]:
-    if feedback not in FAMILIARITY_FEEDBACK:
+    if feedback not in LEXICON_STATE_EDITS:
         raise ValueError("invalid_familiarity_feedback")
     now = now or utc_now()
     profile = deepcopy(profile)
@@ -777,12 +779,71 @@ def apply_lexicon_feedback(
             contexts.append(context_id)
     lexical["surface"] = str(surface or lexical.get("surface") or "")
     lexical["gloss_zh"] = str(gloss_zh or lexical.get("gloss_zh") or "")
+    source_name = str(source or "mapping")
+    occurrence_fields = (
+        "self_report_status",
+        "explicit_known",
+        "aural_stage",
+        "confidence",
+        "next_window_start",
+        "next_window_end",
+    )
+    if feedback == "undo":
+        if source_name != "subtitle":
+            raise ValueError("invalid_lexicon_undo_source")
+        restore = lexical.get("state_edit_restore")
+        if not isinstance(restore, dict):
+            raise ValueError("lexicon_state_undo_unavailable")
+        lexical["status"] = str(restore.get("status") or "unseen")
+        lexical["explicit_known"] = bool(restore.get("explicit_known"))
+        lexical["score"] = float(restore.get("score") or 0.0)
+        for occurrence_id, snapshot in (restore.get("occurrences") or {}).items():
+            state = profile.get("items", {}).get(occurrence_id)
+            if not state or not isinstance(snapshot, dict):
+                continue
+            for field in occurrence_fields:
+                state[field] = deepcopy(snapshot.get(field))
+        lexical["state_edit_restore"] = None
+        lexical["last_feedback_at"] = isoformat(now)
+        lexical.setdefault("evidence", []).append(
+            {
+                "at": isoformat(now),
+                "kind": "EXPLICIT_STATE_RESET",
+                "feedback": "undo",
+                "restored_status": lexical["status"],
+                "source": "subtitle",
+                "intent": "subtitle_state_undo",
+                "known_override": bool(lexical.get("explicit_known")),
+                "context_fingerprint": context_id,
+                "replays": 0,
+                "answer_visible": True,
+                "clean_evidence": False,
+                "policy_version": policy_version,
+            }
+        )
+        lexical["evidence"] = lexical["evidence"][-30:]
+        profile["updated_at"] = isoformat(now)
+        return profile
+    if source_name == "subtitle":
+        lexical["state_edit_restore"] = {
+            "status": str(lexical.get("status") or "unseen"),
+            "explicit_known": bool(lexical.get("explicit_known")),
+            "score": float(lexical.get("score") or 0.0),
+            "occurrences": {
+                occurrence_id: {
+                    field: deepcopy(profile.get("items", {}).get(occurrence_id, {}).get(field))
+                    for field in occurrence_fields
+                }
+                for occurrence_id in lexical.get("occurrence_ids", [])
+                if occurrence_id in profile.get("items", {})
+            },
+        }
     counts = lexical.setdefault("feedback_counts", {name: 0 for name in FAMILIARITY_FEEDBACK})
     for name in FAMILIARITY_FEEDBACK:
         counts.setdefault(name, 0)
-    counts[feedback] = int(counts.get(feedback, 0)) + 1
+    if feedback in FAMILIARITY_FEEDBACK:
+        counts[feedback] = int(counts.get(feedback, 0)) + 1
     lexical["status"] = feedback
-    source_name = str(source or "mapping")
     explicit_source = source_name in {"subtitle", "explicit_no_more_explanations"}
     if feedback == "known":
         lexical["explicit_known"] = bool(lexical.get("explicit_known")) or explicit_source
@@ -971,14 +1032,15 @@ def apply_probe_result(
         if variant_id not in used:
             used.append(variant_id)
         state["used_probe_variants"] = used[-12:]
-        state["last_probe_at"] = isoformat(now)
-        state["last_probe_result"] = outcome
-        if outcome == "correct":
-            state["next_window_start"] = isoformat(now + timedelta(days=6))
-            state["next_window_end"] = isoformat(now + timedelta(days=10))
-        else:
-            state["next_window_start"] = isoformat(now + timedelta(hours=PROBE_WINDOW_START_HOURS))
-            state["next_window_end"] = isoformat(now + timedelta(hours=PROBE_WINDOW_END_HOURS))
+        if presentation_count == 1:
+            state["last_probe_at"] = isoformat(now)
+            state["last_probe_result"] = outcome
+            if outcome == "correct":
+                state["next_window_start"] = isoformat(now + timedelta(days=6))
+                state["next_window_end"] = isoformat(now + timedelta(days=10))
+            else:
+                state["next_window_start"] = isoformat(now + timedelta(hours=PROBE_WINDOW_START_HOURS))
+                state["next_window_end"] = isoformat(now + timedelta(hours=PROBE_WINDOW_END_HOURS))
     state.setdefault("evidence", []).append(
         {
             "at": isoformat(now),

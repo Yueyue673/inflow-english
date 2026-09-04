@@ -1477,9 +1477,15 @@ class OpenAICompatibleTranslator(DshTranslator):
 
 
 def configured_default_translator() -> Translator:
-    """Build the runtime chain without silently selecting a model provider."""
+    """Build a local-first runtime chain; network translation requires explicit opt-in."""
 
-    fallback: Translator = FallbackTranslator(GoogleHeuristicTranslator(), ArgosHeuristicTranslator())
+    translation_backend = str(os.environ.get("INFLOW_TRANSLATION_BACKEND") or "argos").strip().casefold()
+    if translation_backend in {"", "argos", "offline", "local"}:
+        fallback: Translator = ArgosHeuristicTranslator()
+    elif translation_backend == "google":
+        fallback = FallbackTranslator(GoogleHeuristicTranslator(), ArgosHeuristicTranslator())
+    else:
+        raise VideoPackError("unsupported_translation_backend")
     backend = str(os.environ.get("INFLOW_MODEL_BACKEND") or "none").strip().casefold()
     if backend in {"", "none", "off", "disabled"}:
         return fallback
@@ -1568,7 +1574,7 @@ def _zipf_frequency(value: str) -> float:
 
 
 class GoogleHeuristicTranslator:
-    """No-key private fallback: Google translation plus deterministic selection."""
+    """Explicit opt-in network translator plus deterministic candidate selection."""
 
     identity = "google-translate-web+wordfreq-context/v3"
 

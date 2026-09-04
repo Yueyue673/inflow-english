@@ -21,13 +21,14 @@ This is the remaining one-time account-owner path. Code/build tasks are automate
 1. Register or open the Chrome Web Store developer dashboard.
 2. Accept the developer agreement and pay Google's one-time registration fee if the account has not done so.
 3. Verify the contact email.
-4. Create a new item and upload `InFlow-English-Chrome-0.2.5.zip` from the GitHub Release.
-5. Copy the name, short description, detailed description, category and language from `LISTING.md`.
-6. Upload the icon and the two screenshots from `store/assets/`.
-7. Fill every Privacy practices field exactly as documented in `LISTING.md`; do not declare analytics, cloud sync or learning effects that do not exist.
-8. Use the published `PRIVACY.md` URL and GitHub Issues support URL.
-9. Paste the reviewer steps from `LISTING.md`.
-10. Save draft, run the dashboard's automated checks, then submit for review.
+4. Create a new item and upload `InFlow-English-Chrome-0.2.6-CWS-first-upload.zip` from the GitHub Release. Do not upload the development ZIP: its fixed development `key` is intentionally absent from the first-store-upload package, following Chrome's [manifest key workflow](https://developer.chrome.com/docs/extensions/reference/manifest/key).
+5. Record the Store item ID assigned after upload. If the optional local service will be tested, add `chrome-extension://<STORE_ID>` to `INFLOW_ALLOWED_EXTENSION_ORIGINS`; never replace it with a guessed ID.
+6. Copy the name, short description, detailed description, category and language from `LISTING.md`.
+7. Upload the icon and the two screenshots from `store/assets/`.
+8. Fill every Privacy practices field exactly as documented in `LISTING.md`: mark Web history, User activity and Website content as collected for core functionality, and disclose any administrator-configured network translator. Do not declare analytics, cloud sync or learning effects that do not exist.
+9. Use the published `PRIVACY.md` URL and GitHub Issues support URL.
+10. Paste the reviewer steps from `LISTING.md`.
+11. Save draft, run the dashboard's automated checks, then submit for review.
 
 ## Stop conditions
 
@@ -35,9 +36,9 @@ Do not submit if the dashboard reports:
 
 - a permission not present in `extension/manifest.json`;
 - remotely hosted code;
-- a screenshot size error;
+- a screenshot size, padding/full-bleed or square-corner error;
 - a privacy answer inconsistent with the manifest;
-- a ZIP version other than `0.2.5`;
+- a ZIP version other than `0.2.6`;
 - a package hash different from the checksum attached to the release.
 
 Do not claim that Store approval, one-click install or automatic updates exist until Google returns an approved public listing URL.

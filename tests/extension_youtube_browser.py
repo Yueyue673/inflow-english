@@ -161,6 +161,7 @@ def main() -> None:
                 context = playwright.chromium.launch_persistent_context(
                     str(profile_dir),
                     headless=False,
+                    viewport={"width": 1280, "height": 800},
                     args=[
                         "--window-position=-32000,-32000",
                         "--window-size=1280,900",
@@ -198,6 +199,9 @@ def main() -> None:
                     raise AssertionError({"subtitle_start_state": shadow_state, "worker_errors": worker_errors}) from exc
                 if list((data_dir / "sessions").glob("*.json")):
                     raise AssertionError("session_started_before_continuous_playback")
+                dock_geometry = page.evaluate("""() => { const host=document.querySelector('#inflow-extension-root'); const root=host?.shadowRoot; const video=document.querySelector('video')?.getBoundingClientRect(); const pill=root?.querySelector('#pill')?.getBoundingClientRect(); return {dock:host?.dataset.dock,video:{left:video?.left,right:video?.right,top:video?.top,bottom:video?.bottom},pill:{left:pill?.left,right:pill?.right,top:pill?.top,bottom:pill?.bottom}}; }""")
+                if dock_geometry["dock"] != "side" or dock_geometry["pill"]["left"] < dock_geometry["video"]["right"]:
+                    raise AssertionError({"status_overlaps_video": dock_geometry})
                 page.locator("video").evaluate("video => video.play()")
                 page.wait_for_timeout(8500)
                 if list((data_dir / "sessions").glob("*.json")) or list((data_dir / "import-jobs").glob("*.json")):
@@ -273,13 +277,21 @@ def main() -> None:
                     raise AssertionError({"interaction_wait_state": state, "item": item, "session": fetch(base, f"/api/sessions/{session_id}"), "worker_errors": worker_errors}) from exc
                 context_text = host.locator(".phrase").inner_text()
                 translation_text = host.locator(".translation").inner_text()
+                if host.locator("#skipMapping").is_hidden():
+                    raise AssertionError("mapping_has_no_visible_exit")
+                exit_geometry = page.evaluate("""() => { const root=document.querySelector('#inflow-extension-root').shadowRoot; const card=root.querySelector('.card').getBoundingClientRect(); const skip=root.querySelector('#skipMapping').getBoundingClientRect(); return {card:{top:card.top,bottom:card.bottom},skip:{top:skip.top,bottom:skip.bottom}}; }""")
+                if exit_geometry["skip"]["top"] < exit_geometry["card"]["top"] or exit_geometry["skip"]["bottom"] > exit_geometry["card"]["bottom"] + 1:
+                    raise AssertionError({"mapping_exit_clipped": exit_geometry})
                 geometry = page.evaluate("""() => {
                   const video=document.querySelector('video').getBoundingClientRect();
                   const overlay=document.querySelector('#inflow-extension-root').shadowRoot.querySelector('#overlay').getBoundingClientRect();
                   const visible={left:Math.max(0,video.left),top:Math.max(0,video.top),right:Math.min(innerWidth,video.right),bottom:Math.min(innerHeight,video.bottom)};
-                  return {video:{x:visible.left,y:visible.top,width:visible.right-visible.left,height:visible.bottom-visible.top},overlay:{x:overlay.x,y:overlay.y,width:overlay.width,height:overlay.height}};
+                  return {dock:document.querySelector('#inflow-extension-root').dataset.dock,video:{x:visible.left,y:visible.top,width:visible.right-visible.left,height:visible.bottom-visible.top},overlay:{x:overlay.x,y:overlay.y,width:overlay.width,height:overlay.height}};
                 }""")
-                if any(abs(geometry["video"][field] - geometry["overlay"][field]) > 2 for field in ("x", "y", "width", "height")):
+                if geometry["dock"] == "side":
+                    if geometry["overlay"]["x"] < geometry["video"]["x"] + geometry["video"]["width"]:
+                        raise AssertionError({"teaching_overlay_blocks_video": geometry})
+                elif any(abs(geometry["video"][field] - geometry["overlay"][field]) > 2 for field in ("x", "y", "width", "height")):
                     raise AssertionError({"video_center_geometry": geometry})
                 if context_text != item["phrase_text"] or translation_text != expected_mapping_zh:
                     raise AssertionError({"expected_phrase": item["phrase_text"], "expected_translation": expected_mapping_zh, "context": context_text, "translation": translation_text})
@@ -330,6 +342,15 @@ def main() -> None:
                 page.locator("video").evaluate("video => video.pause()")
                 unseen_token.click()
                 host.locator("#wordPanel").wait_for(state="visible", timeout=5_000)
+                if host.locator("#panel").is_visible():
+                    raise AssertionError("status_and_word_panels_open_together")
+                pill.click()
+                host.locator("#panel").wait_for(state="visible", timeout=5_000)
+                if host.locator("#wordPanel").is_visible():
+                    raise AssertionError("pill_did_not_close_word_panel")
+                host.locator("#panelClose").click()
+                unseen_token.click()
+                host.locator("#wordPanel").wait_for(state="visible", timeout=5_000)
                 if item["gloss_zh"] not in host.locator("#wordGloss").inner_text():
                     raise AssertionError({"word_gloss": host.locator("#wordGloss").inner_text(), "item": item})
                 host.locator('[data-word-feedback="known"]').click()
@@ -340,6 +361,28 @@ def main() -> None:
                     page.wait_for_timeout(100)
                 else:
                     raise AssertionError("subtitle_known_feedback_not_saved")
+                if host.locator("#wordPanel").is_hidden() or "以后跳过" not in host.locator("#wordOutcome").inner_text() or host.locator("#wordUndo").is_hidden():
+                    raise AssertionError({"feedback_result_not_visible": host.locator("#wordPanel").inner_text()})
+                if host.locator('[data-word-feedback="known"]').get_attribute("aria-pressed") != "true":
+                    raise AssertionError("known_feedback_not_selected")
+                host.locator("#wordUndo").click()
+                for _ in range(80):
+                    reset_entry = next((row for row in fetch(base, "/api/lexicon")["entries"] if row["knowledge_key"] == item["knowledge_key"]), None)
+                    if reset_entry and reset_entry["status"] == "unseen":
+                        break
+                    page.wait_for_timeout(100)
+                else:
+                    raise AssertionError("subtitle_feedback_undo_not_saved")
+                if "已撤销" not in host.locator("#wordOutcome").inner_text() or host.locator("#wordUndo").is_visible():
+                    raise AssertionError({"undo_result_not_visible": host.locator("#wordPanel").inner_text()})
+                host.locator('[data-word-feedback="known"]').click()
+                for _ in range(80):
+                    subtitle_entry = next((row for row in fetch(base, "/api/lexicon")["entries"] if row["knowledge_key"] == item["knowledge_key"]), None)
+                    if subtitle_entry and subtitle_entry["status"] == "known":
+                        break
+                    page.wait_for_timeout(100)
+                else:
+                    raise AssertionError("subtitle_known_feedback_not_resaved")
                 subtitle_screenshot = ROOT / "data" / "extension-youtube-subtitle-known.png"
                 page.screenshot(path=str(subtitle_screenshot), full_page=False)
 
@@ -395,6 +438,17 @@ def main() -> None:
                     "() => document.querySelector('#inflow-extension-root')?.shadowRoot?.querySelector('#pill')?.textContent === 'InFlow 已暂停'",
                     timeout=10_000,
                 )
+                if second_host.locator("#panelPrimary").inner_text() != "开启本视频":
+                    raise AssertionError({"closed_video_primary_action": second_host.locator("#panelPrimary").inner_text()})
+                second_host.locator("#panelPrimary").click()
+                page.wait_for_function(
+                    "() => document.querySelector('#inflow-extension-root')?.shadowRoot?.querySelector('#pill')?.textContent === 'InFlow 字幕已就绪'",
+                    timeout=10_000,
+                )
+                second_pill.click()
+                if second_host.locator("#panelPrimary").inner_text() != "关闭本视频":
+                    raise AssertionError({"reopened_video_primary_action": second_host.locator("#panelPrimary").inner_text()})
+                second_host.locator("#panelClose").click()
                 context.close()
 
             rebuild = subprocess.run(
@@ -419,7 +473,7 @@ def main() -> None:
             ]
             if page_errors or relevant_console_errors or worker_errors:
                 raise AssertionError({"page_errors": page_errors, "console_errors": relevant_console_errors, "worker_errors": worker_errors})
-            print(json.dumps({"ok": True, "video_id": VIDEO_ID, "pack_id": final_session["pack_id"], "auto_mode_without_per_video_click": True, "automatic_learning_requires_opt_in": True, "learning_gate_to_working_ms": gate_to_working_ms, "display_size_changed_to": "large", "video_center_geometry": geometry, "candidate_pool_count": final_session["candidate_pool_count"], "intervention_budgets": final_session["intervention_budgets"], "interaction_summary": final_session["interaction_summary"], "mapping_familiarity_written": False, "subtitle_feedback": lexical["status"], "manual_replays": lexical["replay_count"], "second_video_id": SECOND_VIDEO_ID, "second_pack_id": second_session["pack_id"], "second_session_preserved": second_session["stage"] == "watch", "learning_off_preserved_subtitles": True, "rebuild_matches": True, "formal_live_tree_unchanged": True, "page_errors": page_errors, "extension_console_errors": relevant_console_errors, "external_youtube_console_errors": len(console_errors) - len(relevant_console_errors), "worker_errors": worker_errors, "mapping_screenshot": str(screenshot), "subtitle_screenshot": str(subtitle_screenshot)}, ensure_ascii=False, indent=2))
+            print(json.dumps({"ok": True, "video_id": VIDEO_ID, "pack_id": final_session["pack_id"], "auto_mode_without_per_video_click": True, "automatic_learning_requires_opt_in": True, "learning_gate_to_working_ms": gate_to_working_ms, "display_size_changed_to": "large", "status_dock_geometry": dock_geometry, "video_center_geometry": geometry, "candidate_pool_count": final_session["candidate_pool_count"], "intervention_budgets": final_session["intervention_budgets"], "interaction_summary": final_session["interaction_summary"], "mapping_familiarity_written": False, "subtitle_feedback": lexical["status"], "subtitle_feedback_visible_and_undoable": True, "manual_replays": lexical["replay_count"], "second_video_id": SECOND_VIDEO_ID, "second_pack_id": second_session["pack_id"], "second_session_preserved": second_session["stage"] == "watch", "learning_off_preserved_subtitles": True, "rebuild_matches": True, "formal_live_tree_unchanged": True, "page_errors": page_errors, "extension_console_errors": relevant_console_errors, "external_youtube_console_errors": len(console_errors) - len(relevant_console_errors), "worker_errors": worker_errors, "mapping_screenshot": str(screenshot), "subtitle_screenshot": str(subtitle_screenshot)}, ensure_ascii=False, indent=2))
         finally:
             stop_tree(server.pid)
 

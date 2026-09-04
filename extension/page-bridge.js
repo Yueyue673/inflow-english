@@ -8,6 +8,12 @@
   const fail = (code) => send({ ok: false, error: String(code || "youtube_page_bridge_failed") });
 
   const captionHosts = new Set(["youtube.com", "www.youtube.com", "m.youtube.com"]);
+  const MAX_CAPTION_EVENTS = 50_000;
+  const MAX_VIDEO_DURATION_SEC = 24 * 60 * 60;
+  const CAPTURE_CACHE_WAIT_MS = 120;
+  const TRACK_SWITCH_WAIT_MS = 250;
+  const GET_OPTION_RETRY_MS = 75;
+  const FETCH_TIMEOUT_MS = 2800;
 
   function validatedCaptionUrl(rawUrl) {
     const value = String(rawUrl || "");
@@ -17,6 +23,19 @@
       throw new Error("youtube_caption_path_invalid");
     }
     return url;
+  }
+
+  function currentWatchVideoId() {
+    try {
+      const url = new URL(location.href);
+      return url.pathname === "/watch" ? String(url.searchParams.get("v") || "") : "";
+    } catch { return ""; }
+  }
+
+  function playerMatchesVideo(player, expectedVideoId) {
+    if (currentWatchVideoId() !== expectedVideoId) return false;
+    try { return String(player?.getPlayerResponse?.()?.videoDetails?.videoId || "") === expectedVideoId; }
+    catch { return false; }
   }
 
   function observedTimedTextUrl(languageCode, { untranslated = false } = {}) {
@@ -34,31 +53,10 @@
     return null;
   }
 
-  async function waitForObservedTimedTextUrl(languageCode, options = {}) {
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      const found = observedTimedTextUrl(languageCode, options);
-      if (found) return found;
-      await new Promise((resolve) => setTimeout(resolve, 75));
-    }
-    return null;
-  }
-
-  async function requestNativeEnglishUrl(player, englishTrack) {
-    const languageCode = String(englishTrack?.languageCode || "en");
-    const existing = observedTimedTextUrl(languageCode, { untranslated: true });
-    if (existing || typeof player?.setOption !== "function") return existing;
-    let previous = null;
-    try {
-      previous = typeof player.getOption === "function" ? player.getOption("captions", "track") : null;
-      player.setOption("captions", "track", { languageCode });
-      return await waitForObservedTimedTextUrl(languageCode, { untranslated: true });
-    } catch {
-      return null;
-    } finally {
-      if (previous && typeof player?.setOption === "function") {
-        try { player.setOption("captions", "track", previous); } catch {}
-      }
-    }
+  function currentCaptionTrack(player) {
+    if (typeof player?.getOption !== "function") return null;
+    try { return player.getOption("captions", "track") || null; }
+    catch { return null; }
   }
 
   function requestCapturedCaptionEntries() {
@@ -82,10 +80,11 @@
           && Number(entry.byte_length) <= 5_000_000
           && entry?.payload
           && Array.isArray(entry.payload.events)
+          && entry.payload.events.length <= MAX_CAPTION_EVENTS
         ).slice(-6);
         finish(safe);
       };
-      const timer = setTimeout(() => finish([]), 120);
+      const timer = setTimeout(() => finish([]), CAPTURE_CACHE_WAIT_MS);
       window.addEventListener("message", onMessage);
       window.postMessage({ source: "inflow-caption-cache-request", nonce, video_id: expectedVideoId }, location.origin);
     });
@@ -103,11 +102,12 @@
 
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  async function captureTrackWithPlayer(player, track) {
-    if (typeof player?.setOption !== "function") return [];
+  async function captureTrackWithPlayer(player, track, expectedVideoId) {
+    if (typeof player?.setOption !== "function" || !playerMatchesVideo(player, expectedVideoId)) return [];
     try {
       player.setOption("captions", "track", track);
-      await wait(250);
+      await wait(TRACK_SWITCH_WAIT_MS);
+      if (!playerMatchesVideo(player, expectedVideoId)) return [];
       return await requestCapturedCaptionEntries();
     } catch {
       return [];
@@ -151,14 +151,14 @@
       const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
       let payload;
       try { payload = JSON.parse(text); } catch { throw new Error("youtube_caption_payload_not_json"); }
-      if (!payload || !Array.isArray(payload.events)) throw new Error("youtube_caption_payload_invalid");
+      if (!payload || !Array.isArray(payload.events) || payload.events.length > MAX_CAPTION_EVENTS) throw new Error("youtube_caption_payload_invalid");
       return payload;
     })();
     const hardTimeout = new Promise((_, reject) => {
       timer = setTimeout(() => {
         controller.abort();
         reject(new Error("youtube_caption_fetch_timeout"));
-      }, 2800);
+      }, FETCH_TIMEOUT_MS);
     });
     try {
       return await Promise.race([operation, hardTimeout]);
@@ -183,7 +183,7 @@
     const details = response?.videoDetails || {};
     if (String(details.videoId || "") !== expectedVideoId) throw new Error("youtube_player_video_mismatch");
     const duration = Number(details.lengthSeconds || document.querySelector("video")?.duration || 0);
-    if (!Number.isFinite(duration) || duration <= 0 || duration > 3 * 60 * 60) throw new Error("youtube_player_duration_invalid");
+    if (!Number.isFinite(duration) || duration <= 0 || duration > MAX_VIDEO_DURATION_SEC) throw new Error("youtube_player_duration_invalid");
     const tracks = response?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
     if (!Array.isArray(tracks) || !tracks.length) throw new Error("youtube_caption_tracks_missing");
     const boundedTracks = tracks.slice(0, 100);
@@ -199,35 +199,42 @@
     let capturedEntries = await requestCapturedCaptionEntries();
     let english = pickCaptured(capturedEntries, "english");
     let chinese = pickCaptured(capturedEntries, "chinese");
-    const previousTrack = typeof player?.getOption === "function" ? player.getOption("captions", "track") : null;
-    try {
-      if (!english && englishTrack) {
-        capturedEntries = [...capturedEntries, ...await captureTrackWithPlayer(player, { languageCode: String(englishTrack.languageCode || "en") })].slice(-6);
-        english = pickCaptured(capturedEntries, "english");
-        chinese ||= pickCaptured(capturedEntries, "chinese");
-      }
-      if (!chinese && chineseTrack) {
-        capturedEntries = [...capturedEntries, ...await captureTrackWithPlayer(player, { languageCode: String(chineseTrack.languageCode || "zh") })].slice(-6);
-        chinese = pickCaptured(capturedEntries, "chinese");
-      }
-      if (!chinese && englishTrack?.isTranslatable) {
-        capturedEntries = [...capturedEntries, ...await captureTrackWithPlayer(player, {
-          languageCode: String(englishTrack.languageCode || "en"),
-          translationLanguage: { languageCode: "zh-Hans" },
-        })].slice(-6);
-        chinese = pickCaptured(capturedEntries, "chinese");
-      }
-    } finally {
-      if (previousTrack && typeof player?.setOption === "function") {
-        try { player.setOption("captions", "track", previousTrack); } catch {}
+    let previousTrack = currentCaptionTrack(player);
+    if (!previousTrack && typeof player?.setOption === "function") {
+      await wait(GET_OPTION_RETRY_MS);
+      previousTrack = currentCaptionTrack(player);
+    }
+    if (previousTrack) {
+      try {
+        if (!english && englishTrack) {
+          capturedEntries = [...capturedEntries, ...await captureTrackWithPlayer(player, { languageCode: String(englishTrack.languageCode || "en") }, expectedVideoId)].slice(-6);
+          english = pickCaptured(capturedEntries, "english");
+          chinese ||= pickCaptured(capturedEntries, "chinese");
+        }
+        if (!chinese && chineseTrack) {
+          capturedEntries = [...capturedEntries, ...await captureTrackWithPlayer(player, { languageCode: String(chineseTrack.languageCode || "zh") }, expectedVideoId)].slice(-6);
+          chinese = pickCaptured(capturedEntries, "chinese");
+        }
+        if (!chinese && englishTrack?.isTranslatable) {
+          capturedEntries = [...capturedEntries, ...await captureTrackWithPlayer(player, {
+            languageCode: String(englishTrack.languageCode || "en"),
+            translationLanguage: { languageCode: "zh-Hans" },
+          }, expectedVideoId)].slice(-6);
+          chinese = pickCaptured(capturedEntries, "chinese");
+        }
+      } finally {
+        if (playerMatchesVideo(player, expectedVideoId) && typeof player?.setOption === "function") {
+          try { player.setOption("captions", "track", previousTrack); } catch {}
+        }
       }
     }
+    if (!playerMatchesVideo(player, expectedVideoId)) throw new Error("youtube_player_video_mismatch");
 
     const englishLanguage = String(englishTrack?.languageCode || "en");
-    const currentEnglishResource = englishTrack ? await waitForObservedTimedTextUrl(englishLanguage) : null;
+    const currentEnglishResource = englishTrack ? observedTimedTextUrl(englishLanguage) : null;
     const currentEnglishUrl = currentEnglishResource ? validatedCaptionUrl(currentEnglishResource) : null;
-    const englishObservedUrl = englishTrack
-      ? (currentEnglishUrl && !currentEnglishUrl.searchParams.has("tlang") ? currentEnglishUrl.toString() : await requestNativeEnglishUrl(player, englishTrack))
+    const englishObservedUrl = englishTrack && currentEnglishUrl && !currentEnglishUrl.searchParams.has("tlang")
+      ? currentEnglishUrl.toString()
       : null;
     const chineseObservedUrl = chineseTrack
       ? observedTimedTextUrl(String(chineseTrack.languageCode || "zh"))
@@ -246,6 +253,7 @@
       const reason = (result) => String(result?.reason?.message || "youtube_caption_fetch_failed").replace(/[^A-Za-z0-9_:-]/g, "").slice(0, 80) || "youtube_caption_fetch_failed";
       throw new Error(`youtube_caption_fetch_empty:${reason(englishResult)}:${reason(chineseResult)}`);
     }
+    if (!playerMatchesVideo(player, expectedVideoId)) throw new Error("youtube_player_video_mismatch");
     send({
       ok: true,
       video_id: expectedVideoId,

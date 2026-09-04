@@ -199,6 +199,9 @@ def main() -> None:
                     raise AssertionError("second_context_feedback_not_saved")
                 if states.get(first_key) != "known":
                     raise AssertionError(states)
+                if host.locator("#wordPanel").is_hidden() or "3–10 天" not in host.locator("#wordOutcome").inner_text():
+                    raise AssertionError({"feedback_result_not_visible": host.locator("#wordPanel").inner_text()})
+                host.locator("#wordClose").click()
                 page.wait_for_function("() => document.querySelector('#inflow-extension-root')?.shadowRoot?.querySelector('#wordPanel').hidden", timeout=5_000)
 
                 screenshot = ROOT / "data" / "lexicon-context-e2e.png"

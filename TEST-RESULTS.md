@@ -1,120 +1,129 @@
-# Verification record — InFlow English 0.2.5
+# Verification record — InFlow English 0.2.6
 
-_Verified: 2026-09-04. This file records observed engineering results, not learning-effect claims._
+_Verified: 2026-09-05. This file records observed engineering results, not learning-effect claims._
 
 ## Release identity
 
 ```text
 product              inflow-english
-extension             0.2.5
-policy                adaptive-v5
-profile schema         3
-reducer               rules-v5
-VideoPack builder      video-pack-builder/1.9.2
-Progressive builder    progressive-pack-builder/0.2.0
-lexical catalogue      oewn:2024
+extension            0.2.6
+policy               adaptive-v5
+profile schema       3
+reducer              rules-v6
+VideoPack builder    video-pack-builder/1.9.2
+Progressive builder  progressive-pack-builder/0.2.0
+lexical catalogue    oewn:2024
 ```
 
 Production active learning for long videos remains disabled.
 
-## Clean-environment unit suite
-
-A fresh CPython 3.11 virtual environment was created from `requirements/ci.txt`, Open English WordNet 2024 was installed, and the staged Git index was exported to a new directory containing **only tracked public files**. The suite was run from that export.
+## Local candidate unit suite
 
 ```text
-Ran 158 tests in 21.345s
-OK (skipped=4)
+Ran 176 tests in 23.090s
+OK
 ```
 
-The four explicit skips are private-media human/audit fixtures that are intentionally excluded from the repository. Their public synthetic contracts remain covered; the private copies also pass on the development machine.
+The suite now covers, among the existing pack, server, security and event tests:
 
-The suite covers:
+- Home/Search → watch SPA installation of the native timed-text hook;
+- same-surface concurrent word lookup/feedback responses bound to immutable selection identities;
+- stale bootstrap/prepare activation unable to create work or overwrite a closed state;
+- old-video page bridges unable to switch/restore tracks or publish success after SPA navigation;
+- hidden players unable to mature the learning gate, pause or silently resume;
+- streaming cancellation above 5 MB, 50,000-event and 10,000-segment limits;
+- a named page-bridge worst-case budget below the 4,000 ms content RPC deadline;
+- transient `player.getOption()` failure and four-hour caption metadata;
+- no automatic second attempt for definitive missing-track failures;
+- advertisements not consuming the one permitted play retry;
+- clearing and restarting an invalidated in-flight subtitle task;
+- same-owner recovery of a persisted open interaction without familiarity evidence, plus server-side technical closure before explicit cross-tab ownership transfer;
+- newly resolved subtitle keys accepting their server-recomputed exact identity;
+- visible word-state consequence plus append-only undo to the exact prior scheduling state;
+- assisted/replayed probes not moving memory windows;
+- adaptive `reason` and `last_changed_at` included in rebuild comparison;
+- old reducers backed up and replayed instead of relabelled, with cross-process migration lock coverage;
+- local Argos as the default translation backend and Google available only through explicit opt-in;
+- separate development and first-Chrome-Web-Store-upload archives.
 
-- strict YouTube/source validation and immutable pack integrity;
-- natural cue construction, caption alignment and compound-word boundaries;
-- exact/provisional lexical identity and illegal model-ID rejection;
-- GPT-compatible adapter isolation and no-model default behaviour;
-- profile schema migration, transaction replay and idempotent events;
-- replay counts independent from familiarity state;
-- explicit known override and later reversal;
-- session ownership and explicit cross-document claim;
-- loopback Host/Origin/Fetch-Metadata/content-type/body-size boundaries;
-- media allowlists, path traversal and symlink rejection;
-- one-heavy-worker/four-pending resource limits;
-- failed-import circuit breaking and explicit retry;
-- launcher log rotation and pack verification-cache invalidation;
-- extension manifest, sender allowlists and release-file contracts.
+Four private-media human/audit tests remain conditionally skipped in a public checkout because those media are intentionally not committed. Their public synthetic contracts are covered.
 
 ## Browser contracts
 
-All browser contracts used isolated temporary profiles and data directories, a real extension load, muted audio, and a guard proving the formal `data/live` tree was unchanged.
+All browser contracts used isolated temporary profiles and data directories, real extension loading, muted audio and a guard proving the formal `data/live` tree was unchanged.
 
 ### Standalone captions — no localhost permission
 
 ```text
-host visible                 195 ms
-bilingual caption ready      1560 ms
-missing-track error          4581 ms
-automatic play retry ready   770 ms
-same-document SPA switch     579 ms
-status geometry              124.94 × 32 px
-in-script status metric      5 ms
-in-script retry attempt      465 ms
+host visible                         63 ms
+bilingual caption ready             108 ms
+paused missing-track error         4578 ms
+playing missing-track error        4579 ms
+definitive failure auto-retried     false
+first-play recovery                  312 ms
+same-document SPA switch              12 ms
+status geometry                       124.94 × 32 px
+status dock                           side; 10 px beyond video edge
+viewport hide → return               passed
 ```
 
 Observed:
 
-- extension works without localhost permission or Python;
-- Chinese-primary and English-secondary caption hierarchy is visible;
+- captions and sentence replay work without localhost permission or Python;
+- on a wide viewport the status pill is outside the video rectangle;
 - ads hide captions and block sentence replay;
 - stale captions do not survive same-document navigation;
-- missing tracks stop within five seconds;
-- a paused/background open retries once automatically on first playback;
+- a definitive no-track result settles within five seconds instead of running a second full attempt;
+- a later user play event may still recover once if tracks become available;
 - no backend caption job is created.
 
 ### Closed production boundary
 
 ```text
-closed shadow root             true
-page-private state exposed     false
-synthetic keyboard blocked     true
-accessible status              InFlow 字幕已就绪
+closed shadow root           true
+page-private state exposed   false
+synthetic keyboard blocked   true
+accessible status            InFlow 字幕已就绪
 ```
 
 ### Native one-shot timed-text response
 
-The browser fixture served each English/Chinese native request successfully only once, then returned an empty body to every duplicate request. The document-start hook still published:
+The fixture started on YouTube Home, then performed same-document navigation to `/watch`. Each English/Chinese native request succeeded only once and every duplicate returned an empty body. The document-lifetime hook still published:
 
 ```text
 The native response is captured once.
 原生响应只捕获一次。
 ```
 
-This regression fails if the extension returns to re-fetching one-time/PO-bound timed-text URLs.
-
-### Optional learning path
+### Optional learning and interaction UI
 
 ```text
-automatic learning default/permission gate  passed
-continuous-play gate to working             8106 ms
-natural-phrase interaction completed        1
-mandatory familiarity write                 none
-manual replay count                         1
-learning-off preserved captions             true
-profile rebuild matched event ledger        true
-page / extension worker errors              0 / 0
+automatic learning permission gate         passed
+continuous-play gate to working             8199 ms
+wide-layout status/video overlap             none
+wide-layout teaching/video overlap           none
+teaching side panel                           300 × 498 px
+mapping actions visible without scrolling    true
+natural-phrase interaction completed         1
+mandatory familiarity write                  none
+manual replay count                          1
+subtitle feedback visible and undoable       true
+learning-off preserved captions              true
+profile rebuild matched event ledger         true
+page / worker errors                          0 / 0
 ```
 
-The card used `看清了，继续`, `再听一遍`, and optional `这个义项以后不用解释`. The Chinese sentence shown in the card matched the active caption bundle.
+The mapping stage exposes `看清了，继续`, `再听一遍`, `以后跳过此义项` and `跳过这次`. The word panel keeps the saved consequence visible and offers `撤销`; it no longer disappears immediately after a write. `关闭本视频` and `开启本视频` were exercised as an inverse round trip.
 
 ### Context-scoped lexical identity
 
-Two visible occurrences of `bank` produced different provisional keys:
+Two visible occurrences of `bank` produced separate provisional keys:
 
 ```text
 river-bank context       known
 financial-bank context   familiar
 keys distinct            true
+feedback result visible  true
 ```
 
 Changing the financial occurrence did not mutate the river occurrence.
@@ -131,9 +140,9 @@ full video stored              false
 page / worker errors           0 / 0
 ```
 
-This verifies current-window publication, one adjacent-window delta, no full-video artifact, a hard one-window prefetch cap, and that an in-flight old window cannot overwrite a newer seek focus epoch. It does not prove current real-YouTube long-video transport.
+This verifies current-window publication, one adjacent-window delta, no full-video artifact, a hard one-window prefetch cap and stale-epoch isolation. It does not prove current real-YouTube long-video transport.
 
-### Subtitle-before-learning timing
+### Subtitle before learning
 
 ```text
 page caption ready before learning    true
@@ -144,103 +153,105 @@ learning import after continuous gate true
 input shortcut protection             true
 ```
 
-## Formal local service read-back
+## Formal local service migration and read-back
 
-After backing up and replaying the 160-event formal ledger:
+A complete copy was created under the ignored `data/backups/pre-0.2.6-*` tree. Raw rules-v5 profile versus rules-v6 replay produced exactly one difference:
 
 ```text
-health latency           4.8 ms
-product                  inflow-english
-WordNet warmup           ready
-profile reducer          rules-v5
-schema                   3
-events                   160
-pending transactions     0
-heavy queue depth        0
-progressive learning     false
+reducer_version   rules-v5 → rules-v6
 ```
 
-The migration changed only 20 `replay_count` projections that were already present in historical interaction events. `events.jsonl` retained SHA-256:
+No item, lexicon or adaptive field changed. The 160-event ledger retained SHA-256:
 
 ```text
 28b48f04ea1665b86e657cfda5fa63237416ea750c0cf7d611beb510f2fbb2fa
 ```
 
-A complete pre-migration copy was created under the ignored local `data/backups/` tree.
-
-## Release archive
-
-`python tools/build_extension.py --output-dir dist` produced an exact 12-file allowlist archive:
+After migration and restart:
 
 ```text
-InFlow-English-Chrome-0.2.5.zip
-SHA-256 149751f6d76bb885cb58458ea6ba9fbd88a23bceb7da65881f3dfb22d6a2ab4c
+product                  inflow-english
+extension                0.2.6
+profile reducer          rules-v6
+schema                   3
+WordNet warmup           ready
+events                   160
+pending transactions     0
+heavy queue depth        0
+progressive learning     false
+rebuild mismatches       0
+concurrent --write       refused: data_directory_in_use
 ```
 
-Archive verification returned no bad member. Its manifest exactly matched `extension/manifest.json`:
+## Release archives
+
+The exact 12-file allowlist builder produced two verified archives:
 
 ```text
-required permission        storage
-required host              https://www.youtube.com/*
-optional host              http://127.0.0.1:8767/*
+InFlow-English-Chrome-0.2.6.zip
+SHA-256 fcfca3a1ecc55ee46af6e7d830d846df10964666590e048c9cd9664396467ea0
+manifest.key present   true
+
+InFlow-English-Chrome-0.2.6-CWS-first-upload.zip
+SHA-256 9b8b511a5100e215c36bb4515e6e43e6b8a95f8b6e9ad287e2a801080ccf179a
+manifest.key present   false
 ```
 
-## Public-source leak gate
+Both archives contain 12 members and `ZipFile.testzip()` returned no bad member. The second package is the only candidate for a brand-new Chrome Web Store item. Google must assign its Store ID before that origin can be added to `INFLOW_ALLOWED_EXTENSION_ORIGINS`.
 
-The staged candidate contained 106 files and no match for:
+## Product screenshots
 
-- the developer's Windows username or QA-drive path;
-- credential-shaped OpenAI/GitHub/bearer values;
-- runtime data, events, profiles or backups;
-- videos, audio, logs or ZIP archives;
-- the local DSH model patch or personal launcher.
+The README and Store assets were regenerated from the browser runs after the UI changes:
 
-All public Markdown relative links resolved.
+- status/word surface docked beside the video;
+- saved word result and `撤销` visible;
+- teaching card docked beside the video;
+- all four teaching actions visible in a fixed action area.
+
+The Store assets are direct 1280×800 full-viewport captures with square corners. They are byte-for-byte copies of the corresponding post-fix browser screenshots: no padding, stretching, cropping or rounded-corner frame was added.
+
+## Real Chrome and real YouTube boundary
+
+### Existing signed-in Chrome — historical 0.2.5 transport proof
+
+Version 0.2.5 previously produced visible two-line captions on `arj7oStGLkU` and `iG9CE55wbtY`, including a measured 2379 ms post-play caption attempt on the latter. That remains evidence for the signed-in native-response transport introduced in 0.2.5; it is not relabelled as a 0.2.6 run.
+
+### 0.2.6 installed-path checks
+
+- The actual Chrome extension card was reloaded and read back as `0.2.6`.
+- An isolated current 0.2.6 Chromium page loaded the real YouTube player and extension host.
+- The anonymous player then hit YouTube's own `LOGIN_REQUIRED` / “请登录，以便我们确认你不是聊天机器人” gate, so no 0.2.6 real-caption success is claimed from that run.
+- The visible 0.2.6 status stayed beside the player rather than covering it.
+- The user's test tab suffered a one-off blank YouTube renderer while both no-extension and 0.2.6 isolated controls loaded the same player; the tab was returned to a blank New Tab page. This is not counted as a product pass or failure.
+
+## Public staged-checkout gate
+
+The final staged index was exported to a clean directory containing 108 tracked public files and no working-tree-only files. From that export:
+
+```text
+Ran 176 tests in 23.203s
+OK (skipped=4)
+standalone caption browser     passed
+closed-shadow security         passed
+native one-shot + Home→watch   passed
+development archive            passed; hash matched local build
+CWS first-upload archive       passed; hash matched local build
+```
+
+A programmatic scan found zero matches for the developer's absolute Windows/QA paths, credential-shaped OpenAI/GitHub/Google/bearer/private-key values, and zero broken relative Markdown links. Both Store screenshots are direct 1280×800 captures byte-for-byte identical to their documentation images. The stale `Web history: not collected` statement is absent; Web history, User activity and Website content are disclosed for core functionality, and the popup discloses local URL/activity handling plus the offline translation default.
+
+GitHub Actions is verified live after push and is intentionally not frozen into this pre-push file; the workflow itself runs the same unit, standalone, closed-shadow, native one-shot and dual-archive gates.
 
 ## Explicitly not passed
 
-### Real anonymous YouTube
-
-System Chrome in an isolated anonymous profile returned:
-
-```text
-playability  LOGIN_REQUIRED
-reason       请登录，以便我们确认你不是聊天机器人
-caption tracks 0
-```
-
-Three anonymous `yt-dlp` metadata attempts also failed with `yt_dlp_inspect_failed`. This is an external anti-bot/login boundary, not a passing compatibility result.
-
-### Existing signed-in Chrome
-
-The unpacked extension card was read back as `0.2.5`, then two ordinary watch pages were exercised through native Chrome UI/AX without DevTools access:
-
-```text
-arj7oStGLkU   visible two-line InFlow caption
-               status: InFlow 字幕已就绪
-
-iG9CE55wbtY   visible two-line InFlow caption
-               status visible: 11 ms
-               post-play caption attempt: 2379 ms
-```
-
-A screenshot inspection verified that the second video's visible English and Chinese lines covered the same sentence:
-
-```text
-despite all the expertise that's been on parade for the past four days,
-儘管我們在過去四天中探討了各種專業知識—
-```
-
-The videos were muted during QA. The route-to-ready value from the second page included several minutes of deliberate diagnostic waiting and is intentionally excluded from latency claims.
-
-The remaining release gates are:
-
-- no-caption, network-loss, browser-restart and low-resource cases on representative real videos;
-- real long-video 60 s / 5220 s transport after a lawful, non-cookie-dependent source path;
-- Chrome Web Store approval;
+- 0.2.6 signed-in real-caption replay after the final installed reload;
+- a user-authorized real 8-second learning interaction from the installed surface;
+- representative real no-caption, network-loss, low-resource and endurance matrices;
+- real long-video 60 s / 5220 s learning transport after a lawful source path;
+- Chrome Web Store approval and one-click automatic updates;
 - a signed optional-backend installer;
-- a user-owned real learning interaction and restart recovery from the final install surface.
+- 24-hour or seven-day retention, transfer to a new speaker/context, improved completion rate or repeated voluntary use.
 
 ## Product-value boundary
 
-The verified value is immediate caption/replay assistance and one safe learning-interaction transport. This record does **not** demonstrate 24-hour retention, seven-day retention, cross-speaker transfer, improved completion rate or repeated voluntary use.
+The verified value is immediate caption/replay assistance, corrected interaction semantics and safe learning-interaction transport. These tests do not demonstrate durable vocabulary learning or mastery.

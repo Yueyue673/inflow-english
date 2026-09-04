@@ -41,6 +41,7 @@ from video_pack import (
     build_caption_aligned_cues,
     build_natural_cues,
     build_sparse_natural_cues,
+    configured_default_translator,
     filter_sparse_cues_by_english_captions,
     parse_youtube_json3_captions,
     select_candidate_cue_shortlist,
@@ -267,15 +268,22 @@ class VideoPackContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             OpenAICompatibleTranslator(endpoint="http://api.openai.example/v1/chat/completions", model="gpt-test")
 
-    def test_default_builder_never_invokes_dsh_or_exact_sense_model(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            builder = VideoPackBuilder(Path(temporary), transcriber=FakeTranscriber(), media_tools=FakeMediaTools())
-        self.assertIsInstance(builder.translator, FallbackTranslator)
-        self.assertIsInstance(builder.translator.primary, GoogleHeuristicTranslator)
-        self.assertIsInstance(builder.translator.fallback, ArgosHeuristicTranslator)
-        self.assertNotIsInstance(builder.translator.primary, DshTranslator)
+    def test_default_builder_never_invokes_network_translation_dsh_or_exact_sense_model(self):
+        with patch.dict(os.environ, {"INFLOW_MODEL_BACKEND": "none", "INFLOW_TRANSLATION_BACKEND": "argos"}):
+            with tempfile.TemporaryDirectory() as temporary:
+                builder = VideoPackBuilder(Path(temporary), transcriber=FakeTranscriber(), media_tools=FakeMediaTools())
+        self.assertIs(type(builder.translator), ArgosHeuristicTranslator)
+        self.assertNotIsInstance(builder.translator, DshTranslator)
+        self.assertNotIn("google", builder.translator.identity.casefold())
         self.assertNotIn("dsh", builder.translator.identity.casefold())
-        self.assertEqual(builder.translator.resolve_senses([{"occurrence_id": "x", "surface": "bank", "phrase_text": "by the bank"}]), {})
+        self.assertIsNone(getattr(builder.translator, "resolve_senses", None))
+
+    def test_google_translation_requires_explicit_backend_opt_in(self):
+        with patch.dict(os.environ, {"INFLOW_MODEL_BACKEND": "none", "INFLOW_TRANSLATION_BACKEND": "google"}):
+            translator = configured_default_translator()
+        self.assertIsInstance(translator, FallbackTranslator)
+        self.assertIsInstance(translator.primary, GoogleHeuristicTranslator)
+        self.assertIsInstance(translator.fallback, ArgosHeuristicTranslator)
 
     def test_strict_youtube_url_acceptance_and_rejection(self):
         expected = validate_youtube_url(VIDEO_URL)

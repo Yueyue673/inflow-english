@@ -71,6 +71,7 @@
   let subtitleState = "idle";
   let subtitleTaskVideoId = null;
   let subtitleTask = null;
+  let lastSubtitleErrorCode = null;
   let automaticSubtitleRetryVideoId = null;
   let automaticSubtitleRetryAttempts = 0;
   let nativeCaptionsOwned = false;
@@ -84,7 +85,9 @@
   let currentCaptionRange = null;
   let suppressLearningUntilMediaTime = null;
   let selectedWord = null;
+  let wordSelectionGeneration = 0;
   let videoBoundsObserver = null;
+  let videoBoundsEstablished = false;
   let statusError = false;
   let backendAvailable = false;
   let learningRetryBlocked = false;
@@ -106,21 +109,26 @@
       .ui { font-family: Inter, "Segoe UI", "Microsoft YaHei", sans-serif; color: #f7f8fa; }
       button { font: inherit; }
       #pill { pointer-events:auto; position:fixed; z-index:30; right:calc(var(--video-right,20px) + 12px); top:calc(var(--video-top,0px) + 12px); min-width:118px; min-height:32px; padding:0 11px; overflow:hidden; border:1px solid rgba(255,255,255,.20); border-radius:8px; color:#f7f8fa; background:rgba(24,29,37,.90); box-shadow:0 4px 16px rgba(0,0,0,.30); cursor:pointer; opacity:.92; font-size:12px; font-weight:650; line-height:1; white-space:nowrap; backdrop-filter:blur(12px); transition:opacity .14s,background .14s,border-color .14s; }
+      :host([data-dock="side"]) #pill { left:calc(var(--video-right-edge,100vw) + 10px); right:auto; top:var(--video-top,0px); min-width:104px; }
       #pill:hover, #pill:focus-visible, #pill[data-expanded="true"] { color:#fff; background:rgba(15,17,21,.97); border-color:rgba(255,255,255,.34); opacity:1; outline:none; }
       #pill:focus-visible { box-shadow:0 0 0 2px rgba(159,193,255,.75),0 4px 16px rgba(0,0,0,.30); }
       #pill[data-state="ready"] { background:rgba(50,76,108,.94); }
       #pill[data-state="captions"] { background:rgba(44,63,86,.92); }
       #pill[data-state="working"] { background:rgba(105,77,35,.94); animation:pulse 1.1s ease-in-out infinite; }
       #pill[data-state="error"] { color:#fff; background:rgba(103,48,48,.96); opacity:1; }
-      #panel, #wordPanel { pointer-events:auto; position:fixed; z-index:25; right:calc(var(--video-right,20px) + 12px); width:min(340px,calc(var(--video-width,100vw) - 24px)); padding:14px; border:1px solid rgba(255,255,255,.15); border-radius:12px; background:rgba(15,17,21,.96); box-shadow:0 16px 48px rgba(0,0,0,.42); backdrop-filter:blur(18px); }
+      #panel, #wordPanel { pointer-events:auto; position:fixed; z-index:25; right:calc(var(--video-right,20px) + 12px); width:min(320px,calc(var(--video-width,100vw) - 24px)); max-height:calc(var(--video-height,100vh) - 52px); overflow:auto; padding:14px; border:1px solid rgba(255,255,255,.15); border-radius:12px; background:rgba(15,17,21,.96); box-shadow:0 16px 48px rgba(0,0,0,.42); backdrop-filter:blur(18px); }
       #panel { top:calc(var(--video-top,0px) + 52px); }
       #wordPanel { bottom:calc(var(--video-bottom,22px) + 52px); }
+      :host([data-dock="side"]) #panel, :host([data-dock="side"]) #wordPanel { left:calc(var(--video-right-edge,100vw) + 10px); right:auto; top:calc(var(--video-top,0px) + 42px); bottom:auto; width:min(300px,calc(var(--side-space,320px) - 20px)); max-height:calc(var(--video-height,100vh) - 42px); box-shadow:0 8px 28px rgba(0,0,0,.30); }
       #panel[hidden], #wordPanel[hidden], #caption[hidden], #overlay[hidden] { display:none !important; }
+      :host([data-video-visible="false"]) #pill, :host([data-video-visible="false"]) #panel, :host([data-video-visible="false"]) #wordPanel, :host([data-video-visible="false"]) #caption, :host([data-video-visible="false"]) #overlay { display:none !important; }
       #panel strong, #wordPanel strong { display:block; font-size:14px; margin-bottom:6px; }
       #panel p, #wordPanel p { margin:0; color:#b9c1cd; font-size:12px; line-height:1.5; }
+      #wordOutcome { margin-top:10px !important; padding:8px 9px; border-radius:7px; color:#dce8f8 !important; background:rgba(119,153,198,.14); }
       .panel-actions, .word-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
       .panel-actions button, .word-actions button { min-height:34px; padding:0 11px; border-radius:8px; border:1px solid #3b4350; color:#e7ebf2; background:#20252d; cursor:pointer; }
-      #caption { pointer-events:auto; position:fixed; z-index:20; left:var(--video-center-x,50vw); top:calc(var(--video-top,0px) + var(--video-height,100vh) - 68px); transform:translate(-50%,-100%); width:max-content; max-width:min(760px,calc(var(--video-width,100vw) - 64px)); padding:10px 34px 11px 16px; border:1px solid rgba(255,255,255,.10); border-radius:9px; color:#fff; background:rgba(5,7,10,.82); box-shadow:0 8px 24px rgba(0,0,0,.28); line-height:1.45; text-align:center; text-shadow:0 1px 2px rgba(0,0,0,.9); backdrop-filter:blur(8px); overflow-wrap:anywhere; }
+      .word-actions button[aria-pressed="true"] { border-color:#9fc1ff; background:#2c405a; }
+      #caption { pointer-events:auto; position:fixed; z-index:20; left:var(--video-center-x,50vw); top:calc(var(--video-top,0px) + var(--video-height,100vh) - 58px); transform:translate(-50%,-100%); width:max-content; max-width:min(760px,calc(var(--video-width,100vw) - 64px)); padding:8px 32px 9px 14px; border:1px solid rgba(255,255,255,.08); border-radius:9px; color:#fff; background:rgba(5,7,10,.68); box-shadow:0 4px 16px rgba(0,0,0,.24); line-height:1.45; text-align:center; text-shadow:0 1px 2px rgba(0,0,0,.9); backdrop-filter:blur(5px); overflow-wrap:anywhere; }
       #captionEnglish { color:rgba(245,247,250,.78); font-size:var(--caption-en-size,18px); font-weight:540; line-height:1.42; text-wrap:pretty; transition:color .12s ease; }
       #captionChinese { margin-top:4px; color:#fff; font-size:var(--caption-zh-size,14px); font-weight:650; line-height:1.48; text-wrap:pretty; }
       #caption[data-languages="en"] #captionEnglish, #caption:hover #captionEnglish, #caption:focus-within #captionEnglish { color:#fff; }
@@ -135,6 +143,16 @@
       #overlay { pointer-events:auto; position:fixed; z-index:40; left:var(--video-left,0px); top:var(--video-top,0px); width:var(--video-width,100vw); height:var(--video-height,100vh); display:grid; place-items:center; padding:24px; background:rgba(5,7,10,.80); opacity:1; transition:opacity 140ms ease; }
       #overlay.concealing { opacity:0; }
       .card { width:min(680px,calc(var(--video-width,100vw) - 40px)); max-height:calc(var(--video-height,100vh) - 36px); overflow:auto; padding:var(--card-padding,28px); border:1px solid rgba(255,255,255,.14); border-radius:16px; background:#11151b; box-shadow:0 30px 90px rgba(0,0,0,.55); }
+      :host([data-dock="side"]) #overlay { left:calc(var(--video-right-edge,100vw) + 10px); top:calc(var(--video-top,0px) + 42px); width:min(300px,calc(var(--side-space,320px) - 20px)); height:calc(var(--video-height,100vh) - 42px); place-items:start stretch; padding:0; background:transparent; box-shadow:none; }
+      :host([data-dock="side"]) .card { width:100%; max-height:100%; display:flex; flex-direction:column; overflow:hidden; padding:18px; border-radius:12px; box-shadow:0 8px 28px rgba(0,0,0,.30); }
+      :host([data-dock="side"]) #title { font-size:18px !important; }
+      :host([data-dock="side"]) .word { font-size:26px !important; }
+      :host([data-dock="side"]) .gloss { margin-bottom:16px; font-size:20px !important; }
+      :host([data-dock="side"]) #content { min-height:0; margin-top:14px; padding-right:4px; overflow:auto; }
+      :host([data-dock="side"]) #actions { flex:0 0 auto; display:grid; grid-template-columns:1fr 1fr; margin-top:12px; padding-top:10px; border-top:1px solid rgba(255,255,255,.10); background:#11151b; }
+      :host([data-dock="side"]) #actions button { width:auto; min-width:0; }
+      :host([data-dock="side"]) #continueLearning, :host([data-dock="side"]) #replay { grid-column:1 / -1; width:100%; }
+      :host([data-dock="side"]) #suppressSense, :host([data-dock="side"]) #skipMapping { min-height:36px; padding:0 8px; font-size:12px; }
       #phase { margin:0 0 8px; color:#9fc1ff; font-size:12px; }
       #title { margin:0; font-size:var(--title-size,25px); line-height:1.25; }
       #content { margin-top:18px; }
@@ -164,16 +182,18 @@
       <section id="panel" hidden>
         <strong id="panelTitle">InFlow English</strong>
         <p id="panelMessage"></p>
-        <div class="panel-actions"><button id="panelPrimary" type="button">启用当前视频</button><button id="panelClose" type="button">收起</button></div>
+        <div class="panel-actions"><button id="panelPrimary" type="button">开启本视频</button><button id="panelClose" type="button">关闭面板</button></div>
       </section>
       <section id="wordPanel" hidden aria-live="polite">
         <strong id="wordSurface"></strong>
         <p id="wordGloss">正在读取当前义项…</p>
+        <p id="wordOutcome" role="status" hidden></p>
         <div class="word-actions">
-          <button data-word-feedback="known" type="button">听到就懂</button>
-          <button data-word-feedback="familiar" type="button">有点熟</button>
-          <button data-word-feedback="unclear" type="button">还不清楚</button>
-          <button id="wordClose" type="button">收起</button>
+          <button data-word-feedback="known" type="button" aria-pressed="false">听到就懂 · 跳过</button>
+          <button data-word-feedback="familiar" type="button" aria-pressed="false">有点熟 · 少出现</button>
+          <button data-word-feedback="unclear" type="button" aria-pressed="false">还不清楚 · 早点出现</button>
+          <button id="wordUndo" type="button" hidden>撤销</button>
+          <button id="wordClose" type="button">关闭</button>
         </div>
       </section>
       <div id="caption" hidden><div id="captionEnglish"></div><div id="captionChinese"></div><button id="captionReplay" type="button" aria-label="重听当前字幕" title="重听当前字幕（S）">↺ <kbd>S</kbd></button></div>
@@ -207,12 +227,16 @@
   const wordPanel = shadow.querySelector("#wordPanel");
   const wordSurface = shadow.querySelector("#wordSurface");
   const wordGloss = shadow.querySelector("#wordGloss");
+  const wordOutcome = shadow.querySelector("#wordOutcome");
+  const wordUndo = shadow.querySelector("#wordUndo");
   const wordClose = shadow.querySelector("#wordClose");
+  const wordFeedbackControls = [...shadow.querySelectorAll("[data-word-feedback]")];
   const caption = shadow.querySelector("#caption");
   const captionEnglish = shadow.querySelector("#captionEnglish");
   const captionChinese = shadow.querySelector("#captionChinese");
   const captionReplay = shadow.querySelector("#captionReplay");
   const overlay = shadow.querySelector("#overlay");
+  const card = shadow.querySelector(".card");
   const phase = shadow.querySelector("#phase");
   const title = shadow.querySelector("#title");
   const content = shadow.querySelector("#content");
@@ -261,9 +285,20 @@
     host.style.setProperty("--card-padding", `${value.padding}px`);
   }
 
+  function markVideoNotVisible() {
+    if (!videoBoundsEstablished) return;
+    host.dataset.videoVisible = "false";
+    panelOpen = false;
+    panel.hidden = true;
+    closeWordPanel();
+  }
+
   function syncVideoBounds() {
     const video = sourceVideo();
-    if (!video) return;
+    if (!video) {
+      markVideoNotVisible();
+      return;
+    }
     const rect = video.getBoundingClientRect();
     const left = Math.max(0, rect.left);
     const top = Math.max(0, rect.top);
@@ -271,12 +306,22 @@
     const bottom = Math.min(innerHeight, rect.bottom);
     const width = Math.max(0, right - left);
     const height = Math.max(0, bottom - top);
-    if (width < 160 || height < 90) return;
+    if (width < 160 || height < 90) {
+      markVideoNotVisible();
+      return;
+    }
+    videoBoundsEstablished = true;
+    host.dataset.videoVisible = "true";
+    const sideSpace = Math.max(0, innerWidth - right);
+    host.dataset.dock = sideSpace >= 320 && !document.fullscreenElement ? "side" : "overlay";
+    card.setAttribute("aria-modal", host.dataset.dock === "overlay" ? "true" : "false");
     host.style.setProperty("--video-left", `${left}px`);
     host.style.setProperty("--video-center-x", `${left + width / 2}px`);
     host.style.setProperty("--video-top", `${top}px`);
     host.style.setProperty("--video-width", `${width}px`);
     host.style.setProperty("--video-height", `${height}px`);
+    host.style.setProperty("--video-right-edge", `${right}px`);
+    host.style.setProperty("--side-space", `${sideSpace}px`);
     host.style.setProperty("--video-right", `${Math.max(0, innerWidth - right)}px`);
     host.style.setProperty("--video-bottom", `${Math.max(0, innerHeight - bottom)}px`);
   }
@@ -307,6 +352,9 @@
       const video = sourceVideo();
       if (video) renderCaption(video.currentTime);
       setMessage(readyMessage());
+    } else {
+      const video = sourceVideo();
+      if (video && !video.paused) scheduleAutomaticSubtitleRetry(video);
     }
     renderStatus();
     manageAutoEnable();
@@ -386,8 +434,9 @@
       const currentVideoPaused = manualDisabledVideoId === videoId;
       pill.textContent = autoMode && !currentVideoPaused ? "InFlow 自动待命" : "InFlow 已暂停";
     }
-    pill.dataset.expanded = panelOpen || statusError ? "true" : "false";
+    pill.dataset.expanded = panelOpen ? "true" : "false";
     pill.setAttribute("aria-label", pill.textContent);
+    pill.setAttribute("aria-expanded", panelOpen ? "true" : "false");
     const metrics = publicState().performanceMetrics;
     pill.title = subtitleActive && metrics.caption_attempt_ms !== null
       ? `字幕本次准备 ${metrics.caption_attempt_ms} ms · 页面累计 ${metrics.caption_route_ms} ms`
@@ -398,9 +447,9 @@
       ? "接管学习"
       : learningRetryBlocked
         ? "重试学习"
-        : !subtitleActive && ["failed", "degraded"].includes(subtitleState)
+        : ["failed", "degraded"].includes(subtitleState)
           ? "重试字幕"
-          : (enabled || preparing || subtitleActive ? "暂停本视频" : "现在启用");
+          : (enabled || preparing || subtitleActive ? "关闭本视频" : "开启本视频");
   }
 
   function setMessage(value, isError = false) {
@@ -474,9 +523,9 @@
 
   function parsePageCaptionTrack(payload, durationSec, requireCjk, idPrefix) {
     const duration = Number(durationSec);
-    if (!payload || !Array.isArray(payload.events) || !Number.isFinite(duration) || duration <= 0) return [];
+    if (!payload || !Array.isArray(payload.events) || payload.events.length > 50_000 || !Number.isFinite(duration) || duration <= 0) return [];
     const rows = payload.events.map((event) => {
-      if (!event || !Array.isArray(event.segs)) return null;
+      if (!event || !Array.isArray(event.segs) || event.segs.length > 10_000) return null;
       const text = event.segs.map((segment) => String(segment?.utf8 || "")).join("")
         .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, " ").replace(/\s+/g, " ").trim();
       if (!text || (requireCjk ? !/[\u3400-\u9fff]/.test(text) : !/[A-Za-z]/.test(text))) return null;
@@ -647,7 +696,10 @@
       .map((row) => ({ cue_id: row.id, start_sec: Number(row.start), end_sec: Number(row.end), text: String(row.text_en) }));
     subtitleActive = captions.length > 0 || transcriptCues.length > 0;
     subtitleState = subtitleActive ? state : "failed";
-    if (subtitleActive) subtitleReadyAt = performance.now();
+    if (subtitleActive) {
+      lastSubtitleErrorCode = null;
+      subtitleReadyAt = performance.now();
+    }
     if (subtitleActive) releaseNativeCaptionBridge();
     const video = sourceVideo();
     if (video && subtitleActive) {
@@ -679,7 +731,10 @@
     lexiconEntries = Array.isArray(lexicalPayload?.entries) ? lexicalPayload.entries : [];
     subtitleActive = captions.length > 0 || transcriptCues.length > 0;
     subtitleState = subtitleActive ? "ready" : "failed";
-    if (subtitleActive) subtitleReadyAt = performance.now();
+    if (subtitleActive) {
+      lastSubtitleErrorCode = null;
+      subtitleReadyAt = performance.now();
+    }
     if (subtitleActive) releaseNativeCaptionBridge();
     const video = sourceVideo();
     if (video && subtitleActive) {
@@ -753,7 +808,8 @@
           if (generation !== routeGeneration || targetVideoId !== currentVideoId()) return;
           if (subtitleActive) return;
           subtitleState = "failed";
-          setMessage(`页面字幕失败：${safeErrorCode(error)}。原视频和 YouTube 字幕继续播放。`, true);
+          lastSubtitleErrorCode = safeErrorCode(error);
+          setMessage(`页面字幕失败：${lastSubtitleErrorCode}。原视频和 YouTube 字幕继续播放。`, true);
           const failedVideo = sourceVideo();
           if (failedVideo && !failedVideo.paused) scheduleAutomaticSubtitleRetry(failedVideo, targetVideoId);
           return;
@@ -787,7 +843,7 @@
     }
     const video = sourceVideo();
     if (video) attachVideo(video);
-    const playingContinuously = Boolean(videoId && video && !video.paused && !video.ended && !document.hidden && !inAd());
+    const playingContinuously = Boolean(videoId && video && !video.paused && !video.ended && !document.hidden && !inAd() && host.dataset.videoVisible === "true");
     if (!playingContinuously) {
       continuousPlaybackStartedAt = 0;
       cancelAutoEnable();
@@ -823,27 +879,46 @@
     }, Math.min(1000, Math.max(100, remaining)));
   }
 
-  function findPack(rows) {
-    const expected = canonicalUrl();
-    return (rows || []).find((row) => row.source_url === expected || String(row.pack_id || "").startsWith(`yt-${videoId}-`)) || null;
+  function activationIsCurrent(generation, targetVideoId) {
+    return generation === routeGeneration && targetVideoId === videoId && targetVideoId === currentVideoId();
   }
 
-  async function preparePack(generation, forceRetry = false) {
+  function requireCurrentActivation(generation, targetVideoId) {
+    if (!activationIsCurrent(generation, targetVideoId)) throw new Error("stale_activation");
+  }
+
+  function findPack(rows, targetVideoId = videoId, expected = canonicalUrl()) {
+    return (rows || []).find((row) => row.source_url === expected || String(row.pack_id || "").startsWith(`yt-${targetVideoId}-`)) || null;
+  }
+
+  async function preparePack(generation, targetVideoId, sourceUrl, forceRetry = false) {
     let packsPayload = await callWorker({ type: "listPacks" });
-    let pack = findPack(packsPayload.packs);
+    requireCurrentActivation(generation, targetVideoId);
+    let pack = findPack(packsPayload.packs, targetVideoId, sourceUrl);
     if (pack) return pack;
     preparing = true;
     renderStatus();
-    importJob = await callWorker({ type: "prepare", url: canonicalUrl(), playhead_sec: Math.max(0, Number(sourceVideo()?.currentTime || 0)), force_retry: forceRetry });
+    requireCurrentActivation(generation, targetVideoId);
+    const pendingJob = await callWorker({ type: "prepare", url: sourceUrl, playhead_sec: Math.max(0, Number(sourceVideo()?.currentTime || 0)), force_retry: forceRetry });
+    if (!activationIsCurrent(generation, targetVideoId)) {
+      if (pendingJob?.job_id) {
+        try { await callWorker({ type: "cancelImport", job_id: pendingJob.job_id }); } catch {}
+      }
+      throw new Error("stale_activation");
+    }
+    importJob = pendingJob;
     const terminalStatuses = ["ready", "complete", "degraded", "failed", "cancelled"];
-    while (generation === routeGeneration && importJob && !importJob.usable && !terminalStatuses.includes(importJob.status)) {
+    while (activationIsCurrent(generation, targetVideoId) && importJob && !importJob.usable && !terminalStatuses.includes(importJob.status)) {
       const stage = STAGE_COPY[importJob.stage] || "正在准备";
       setMessage(`${stage} · ${Math.round((Number(importJob.fraction) || 0) * 100)}%`);
       await delay(1200);
-      importJob = await callWorker({ type: "importStatus", job_id: importJob.job_id });
+      requireCurrentActivation(generation, targetVideoId);
+      const jobStatus = await callWorker({ type: "importStatus", job_id: importJob.job_id });
+      requireCurrentActivation(generation, targetVideoId);
+      importJob = jobStatus;
     }
     preparing = false;
-    if (generation !== routeGeneration) throw new Error("页面已经切换到另一条视频");
+    requireCurrentActivation(generation, targetVideoId);
     if (!importJob?.usable) {
       if (importJob?.status === "cancelled") throw new Error("准备已取消");
       learningRetryBlocked = true;
@@ -853,13 +928,14 @@
     if (importJob.route === "progressive") {
       return {
         pack_id: importJob.pack_id,
-        source_url: canonicalUrl(),
+        source_url: sourceUrl,
         progressive: true,
         progressive_revision: Number(importJob.revision || 0),
       };
     }
     packsPayload = await callWorker({ type: "listPacks" });
-    pack = findPack(packsPayload.packs);
+    requireCurrentActivation(generation, targetVideoId);
+    pack = findPack(packsPayload.packs, targetVideoId, sourceUrl);
     if (!pack) throw new Error("准备完成，但视频包没有出现在本机库中");
     return pack;
   }
@@ -953,6 +1029,26 @@
     }).catch(() => {});
   }
 
+  async function recoverStaleOpenInteraction(currentSession) {
+    const open = currentSession?.open_interaction;
+    if (currentSession?.stage !== "watch" || !open) return currentSession;
+    const itemId = String(open.item_id || "");
+    const interactionId = String(open.interaction_id || "");
+    if (!itemId || !interactionId) throw new Error("stale_interaction_identity_invalid");
+    return callWorker({
+      type: "interactionComplete",
+      session_id: currentSession.session_id,
+      owner_epoch: currentSession.owner_epoch,
+      item_id: itemId,
+      interaction_id: interactionId,
+      outcome: "technical_failure",
+      dwell_ms: 0,
+      phrase_confirmed: false,
+      replays: 0,
+      failure_reason: "recovered_stale_interaction",
+    });
+  }
+
   async function activate({ quiet = false, forceRetry = false, forceClaim = false } = {}) {
     if (enabled || preparing) return publicState();
     if (!quiet) manualDisabledVideoId = null;
@@ -968,32 +1064,48 @@
       return publicState();
     }
     const generation = routeGeneration;
+    const targetVideoId = videoId;
+    const sourceUrl = canonicalUrl();
     preparing = true;
     if (!quiet) panelOpen = true;
     try {
       setMessage("优先加载字幕…");
       await ensureSubtitleFirst(true);
-      if (generation !== routeGeneration) return publicState();
+      requireCurrentActivation(generation, targetVideoId);
       setMessage("连接本机学习服务…");
       const bootstrap = await callWorker({ type: "bootstrap" });
+      requireCurrentActivation(generation, targetVideoId);
       profile = bootstrap.profile;
-      const pack = findPack(bootstrap.packs?.packs) || await preparePack(generation, forceRetry);
+      const pack = findPack(bootstrap.packs?.packs, targetVideoId, sourceUrl) || await preparePack(generation, targetVideoId, sourceUrl, forceRetry);
+      requireCurrentActivation(generation, targetVideoId);
       setMessage("加载本次观看…");
-      session = await callWorker({ type: "createSession", pack_id: pack.pack_id, playhead_sec: Math.max(0, Number(video.currentTime || 0)) });
-      if (["watch_ready", "probe_ready"].includes(session.stage)) {
-        session = await callWorker({ type: "startSession", session_id: session.session_id });
-      } else if (["watch", "probe", "probe_feedback"].includes(session.stage)) {
-        if (session.owner_conflict && !forceClaim) {
+      let nextSession = await callWorker({ type: "createSession", pack_id: pack.pack_id, playhead_sec: Math.max(0, Number(video.currentTime || 0)) });
+      requireCurrentActivation(generation, targetVideoId);
+      if (["watch_ready", "probe_ready"].includes(nextSession.stage)) {
+        nextSession = await callWorker({ type: "startSession", session_id: nextSession.session_id });
+        requireCurrentActivation(generation, targetVideoId);
+      } else if (["watch", "probe", "probe_feedback"].includes(nextSession.stage)) {
+        if (nextSession.owner_conflict && !forceClaim) {
           sessionTakeoverRequired = true;
           throw new Error("此视频的学习正在另一个标签页运行；字幕保持可用。需要时可手动接管。");
         }
-        if (forceClaim) session = await callWorker({ type: "claimSession", session_id: session.session_id });
+        if (forceClaim) {
+          nextSession = await callWorker({ type: "claimSession", session_id: nextSession.session_id });
+          requireCurrentActivation(generation, targetVideoId);
+        }
       }
       sessionTakeoverRequired = false;
-      if (session.stage !== "watch") throw new Error("这次观看包含尚未适配插件的听音验证，请先在本地播放器完成");
+      if (nextSession.stage !== "watch") throw new Error("这次观看包含尚未适配插件的听音验证，请先在本地播放器完成");
+      if (nextSession.open_interaction) {
+        setMessage("正在收尾上次中断的学习步骤…");
+        nextSession = await recoverStaleOpenInteraction(nextSession);
+        requireCurrentActivation(generation, targetVideoId);
+      }
+      session = nextSession;
       profile = session.profile;
       setMessage("预加载字幕和原声片段…");
       await preloadSessionAssets(generation);
+      requireCurrentActivation(generation, targetVideoId);
       handledIds = new Set(session.completed_ids || []);
       encounteredIds = new Set(session.encountered_ids || []);
       previousTime = video.currentTime;
@@ -1018,6 +1130,7 @@
       renderStatus();
       return publicState();
     } catch (error) {
+      if (!activationIsCurrent(generation, targetVideoId) || String(error?.message || error) === "stale_activation") return publicState();
       preparing = false;
       enabled = false;
       setMessage(String(error?.message || error), true);
@@ -1027,7 +1140,15 @@
 
   async function stopLearning(reason = "automatic_learning_off") {
     cancelAutoEnable();
+    const subtitleLoadWasPending = Boolean(subtitleTask && !subtitleActive);
     ++routeGeneration;
+    if (subtitleLoadWasPending) {
+      subtitleTask = null;
+      subtitleTaskVideoId = null;
+      subtitleState = "idle";
+      lastSubtitleErrorCode = null;
+      statusError = false;
+    }
     if (importJob && preparing) {
       try { await callWorker({ type: "cancelImport", job_id: importJob.job_id }); } catch {}
     }
@@ -1049,7 +1170,12 @@
     hideOverlay();
     stopMonitor();
     startMonitor();
-    setMessage(readyMessage());
+    if (subtitleLoadWasPending && autoMode && videoId) {
+      setMessage(waitingMessage());
+      ensureSubtitleFirst(true);
+    } else {
+      setMessage(readyMessage());
+    }
     renderStatus();
     return publicState();
   }
@@ -1080,6 +1206,7 @@
     session = null;
     subtitleActive = false;
     subtitleState = "idle";
+    lastSubtitleErrorCode = null;
     subtitleTaskVideoId = null;
     subtitleTask = null;
     automaticSubtitleRetryVideoId = null;
@@ -1097,8 +1224,7 @@
     currentCaptionCue = null;
     currentCaptionRange = null;
     suppressLearningUntilMediaTime = null;
-    selectedWord = null;
-    wordPanel.hidden = true;
+    closeWordPanel();
     videoBoundsObserver?.disconnect();
     videoBoundsObserver = null;
     audioCache.clear();
@@ -1109,6 +1235,10 @@
     return publicState();
   }
 
+  function retryableSubtitleError(code) {
+    return /^(youtube_caption_fetch_empty|youtube_page_caption_bridge_rpc_timeout|youtube_page_bridge_timeout|youtube_caption_fetch_timeout|youtube_player_response_unavailable|youtube_player_video_mismatch)/.test(String(code || ""));
+  }
+
   function scheduleAutomaticSubtitleRetry(video, playingVideoId = currentVideoId(), { fromPlayEvent = false } = {}) {
     if (
       !autoMode
@@ -1117,15 +1247,19 @@
       || !playingVideoId
       || subtitleActive
       || !["failed", "degraded"].includes(subtitleState)
+      || (!fromPlayEvent && !retryableSubtitleError(lastSubtitleErrorCode))
       || automaticSubtitleRetryVideoId === playingVideoId
       || inAd()
     ) return;
     automaticSubtitleRetryVideoId = playingVideoId;
     setTimeout(() => {
-      if (currentVideoId() === playingVideoId && !subtitleActive && ["failed", "degraded"].includes(subtitleState)) {
-        automaticSubtitleRetryAttempts += 1;
-        retrySubtitles({ automatic: true });
+      if (currentVideoId() !== playingVideoId || subtitleActive || !["failed", "degraded"].includes(subtitleState)) return;
+      if (inAd()) {
+        if (automaticSubtitleRetryVideoId === playingVideoId) automaticSubtitleRetryVideoId = null;
+        return;
       }
+      automaticSubtitleRetryAttempts += 1;
+      retrySubtitles({ automatic: true });
     }, 300);
   }
 
@@ -1395,49 +1529,99 @@
     startMonitor();
   }
 
+  const WORD_STATUS_COPY = {
+    unseen: "当前未判断。选择后会改变这个义项以后出现的频率。",
+    known: "当前：听到就懂。以后跳过这个义项。",
+    familiar: "当前：有点熟。约 3–10 天后再出现。",
+    unclear: "当前：还不清楚。会更早安排复现。",
+  };
+
+  function setWordFeedbackBusy(busy) {
+    wordFeedbackControls.forEach((control) => { control.disabled = Boolean(busy) || !selectedWord?.gloss_zh; });
+    wordUndo.disabled = Boolean(busy);
+  }
+
+  function showWordStatus(status, { saved = false, undone = false } = {}) {
+    const normalized = ["known", "familiar", "unclear"].includes(status) ? status : "unseen";
+    wordFeedbackControls.forEach((control) => control.setAttribute("aria-pressed", control.dataset.wordFeedback === normalized ? "true" : "false"));
+    wordOutcome.hidden = false;
+    wordOutcome.textContent = undone ? "已撤销：恢复为上一次状态。" : `${saved ? "已保存。" : ""}${WORD_STATUS_COPY[normalized]}`;
+  }
+
+  function closeWordPanel() {
+    wordSelectionGeneration += 1;
+    selectedWord = null;
+    wordPanel.hidden = true;
+    wordOutcome.hidden = true;
+    wordUndo.hidden = true;
+  }
+
   async function openWordPanel(button) {
     if (activeInteraction) return;
     const surface = String(button.dataset.surface || "").trim();
     if (!surface) return;
+    const initialStatus = ["known", "familiar", "unclear"].includes(button.dataset.status) ? button.dataset.status : "unseen";
+    const selectionId = ++wordSelectionGeneration;
+    const selectionSentence = String(currentCaptionCue?.text || surface);
     selectedWord = {
+      selection_id: selectionId,
       surface,
-      sentence: String(currentCaptionCue?.text || surface),
+      sentence: selectionSentence,
       knowledge_key: button.dataset.knowledgeKey || "",
       gloss_zh: button.dataset.glossZh || "",
-      status: button.dataset.status || "unseen",
+      status: initialStatus,
+      initial_status: initialStatus,
     };
+    panelOpen = false;
+    renderStatus();
     wordSurface.textContent = surface;
     wordGloss.textContent = selectedWord.gloss_zh || "正在读取当前义项…";
     wordPanel.hidden = false;
+    wordUndo.hidden = true;
+    showWordStatus(initialStatus);
+    setWordFeedbackBusy(!selectedWord.gloss_zh);
     if (selectedWord.gloss_zh) return;
-    const requestedSurface = surface;
     try {
-      const result = await callWorker({ type: "lexiconLookup", surface, sentence: selectedWord.sentence });
-      if (!selectedWord || selectedWord.surface !== requestedSurface) return;
+      const result = await callWorker({ type: "lexiconLookup", surface, sentence: selectionSentence });
+      if (!selectedWord || selectedWord.selection_id !== selectionId) return;
       selectedWord = { ...selectedWord, ...result };
       wordGloss.textContent = result.gloss_zh;
+      showWordStatus(result.status || initialStatus);
+      setWordFeedbackBusy(false);
     } catch {
-      if (selectedWord?.surface === requestedSurface) wordGloss.textContent = "暂时没有可靠释义；这次不记录状态。";
+      if (selectedWord?.selection_id === selectionId) {
+        wordGloss.textContent = "暂时没有可靠释义；这次不记录状态。";
+        setWordFeedbackBusy(true);
+      }
     }
   }
 
-  async function saveWordFeedback(feedback) {
-    if (!selectedWord?.gloss_zh) return;
+  async function saveWordFeedback(feedback, { undo = false } = {}) {
+    if (!selectedWord?.gloss_zh) return false;
+    if (!undo && feedback === selectedWord.status) {
+      showWordStatus(selectedWord.status);
+      return true;
+    }
+    const selection = { ...selectedWord };
+    const selectionId = selection.selection_id;
+    const initialStatus = selection.initial_status || "unseen";
     const result = await callWorker({
       type: "lexiconFeedback",
-      knowledge_key: selectedWord.knowledge_key,
-      surface: selectedWord.surface,
-      gloss_zh: selectedWord.gloss_zh,
-      sentence: selectedWord.sentence,
+      knowledge_key: selection.knowledge_key,
+      surface: selection.surface,
+      gloss_zh: selection.gloss_zh,
+      sentence: selection.sentence,
       familiarity_feedback: feedback,
       source: "subtitle",
     });
     lexiconEntries = lexiconEntries.filter((entry) => entry.knowledge_key !== result.knowledge_key);
     lexiconEntries.push(result);
-    selectedWord = { ...selectedWord, ...result };
     if (currentCaptionCue) renderEnglishCue(currentCaptionCue);
-    wordPanel.hidden = true;
-    selectedWord = null;
+    if (!selectedWord || selectedWord.selection_id !== selectionId) return true;
+    selectedWord = { ...selection, ...result, initial_status: initialStatus };
+    showWordStatus(result.status, { saved: !undo, undone: undo });
+    wordUndo.hidden = undo || result.status === initialStatus;
+    return true;
   }
 
   function processTime() {
@@ -1500,6 +1684,9 @@
   }
 
   function showListening() {
+    panelOpen = false;
+    closeWordPanel();
+    renderStatus();
     captionEnglish.textContent = "";
     captionChinese.textContent = "";
     caption.hidden = true;
@@ -1529,7 +1716,7 @@
     phase.textContent = "声音与意思";
     title.textContent = "看清这个表达";
     content.innerHTML = `<p class="word">${escapeHtml(item.surface)}</p><p class="gloss">${escapeHtml(item.gloss_zh)}</p><p class="label">原声片段</p><p class="phrase">${phraseMarkup(item)}</p><p class="translation">${escapeHtml(teachingTranslation(item))}</p><p id="audioState">${escapeHtml(note)}</p>`;
-    actions.innerHTML = `<button id="continueLearning" class="primary" type="button" disabled>看清了，继续 <kbd>Enter</kbd></button><button id="replay" class="secondary" type="button" disabled>再听一遍 <kbd>R</kbd></button><button id="suppressSense" class="quiet" type="button" disabled>这个义项以后不用解释</button>`;
+    actions.innerHTML = `<button id="continueLearning" class="primary" type="button" disabled>看清了，继续 <kbd>Enter</kbd></button><button id="replay" class="secondary" type="button" disabled>再听一遍 <kbd>R</kbd></button><button id="suppressSense" class="quiet" type="button" disabled>以后跳过此义项</button><button id="skipMapping" class="quiet" type="button">跳过这次</button>`;
   }
 
   function hideOverlay() {
@@ -1576,14 +1763,14 @@
 
   async function beginInteraction(item) {
     const video = sourceVideo();
-    if (!video || activeInteraction || document.hidden || inAd()) return;
+    if (!video || activeInteraction || document.hidden || inAd() || host.dataset.videoVisible !== "true") return;
     const generation = userGeneration;
     const videoAtStart = videoId;
     activeInteraction = { item, interactionId: null, pauseOwned: false, leaseGeneration: generation, firstConfirmed: false, secondConfirmed: false, replays: 0, mappingShownAt: 0, finalized: false, audio: null };
     try {
       const started = await callWorker({ type: "interactionStart", session_id: session.session_id, owner_epoch: session.owner_epoch, item_id: item.id });
       activeInteraction.interactionId = started.interaction.interaction_id;
-      if (currentVideoId() !== videoAtStart || document.hidden || inAd() || video.paused || userGeneration !== generation || video.currentTime - Number(item.anchor_sec) > 0.18) {
+      if (currentVideoId() !== videoAtStart || document.hidden || inAd() || host.dataset.videoVisible !== "true" || video.paused || userGeneration !== generation || video.currentTime - Number(item.anchor_sec) > 0.18) {
         await finalizeInteraction("technical_failure", "safe_boundary_missed");
         return;
       }
@@ -1600,6 +1787,7 @@
       const continueButton = shadow.querySelector("#continueLearning");
       const replayButton = shadow.querySelector("#replay");
       const suppressButton = shadow.querySelector("#suppressSense");
+      const skipButton = shadow.querySelector("#skipMapping");
       const mappingControls = [continueButton, replayButton, suppressButton].filter(Boolean);
       const setControlsDisabled = (disabled) => {
         mappingControls.forEach((button) => { button.disabled = disabled; });
@@ -1624,6 +1812,10 @@
         if (!trustedActivation(event, continueButton)) return;
         const completed = activeInteraction?.firstConfirmed && activeInteraction?.secondConfirmed;
         finalizeInteraction(completed ? "completed" : "technical_failure", completed ? "" : "phrase_audio_unconfirmed");
+      });
+      skipButton.addEventListener("click", (event) => {
+        if (!event.isTrusted) return;
+        finalizeInteraction("skipped", "user_skip_mapping");
       });
       suppressButton.addEventListener("click", async (event) => {
         if (!event.isTrusted || !activeInteraction || activeInteraction.finalized) return;
@@ -1750,7 +1942,7 @@
   async function routeChanged() {
     const next = currentVideoId();
     if (next === videoId) return;
-    if (enabled || preparing || subtitleActive || subtitleTask) await disable("youtube_navigation");
+    if (enabled || preparing || subtitleActive || subtitleTask || subtitleState !== "idle" || nativeCaptionsOwned) await disable("youtube_navigation");
     routeStartedAt = performance.now();
     routeStatusVisibleAt = null;
     subtitleAttemptStartedAt = null;
@@ -1787,6 +1979,7 @@
     subtitleTaskVideoId = null;
     subtitleTask = null;
     subtitleState = "idle";
+    lastSubtitleErrorCode = null;
     statusError = false;
     panelOpen = false;
     setMessage(automatic ? "播放已开始，正在自动重新获取字幕…" : "正在重新获取字幕…");
@@ -1795,7 +1988,9 @@
 
   pill.addEventListener("click", (event) => {
     if (!event.isTrusted) return;
-    panelOpen = !panelOpen;
+    const opening = !panelOpen;
+    if (opening) closeWordPanel();
+    panelOpen = opening;
     renderStatus();
   });
   panelClose.addEventListener("click", (event) => {
@@ -1809,17 +2004,26 @@
   });
   wordClose.addEventListener("click", (event) => {
     if (!event.isTrusted) return;
-    selectedWord = null;
-    wordPanel.hidden = true;
+    closeWordPanel();
   });
-  shadow.querySelectorAll("[data-word-feedback]").forEach((button) => button.addEventListener("click", async (event) => {
+  wordFeedbackControls.forEach((button) => button.addEventListener("click", async (event) => {
     if (!event.isTrusted) return;
-    const controls = [...shadow.querySelectorAll("[data-word-feedback]")];
-    controls.forEach((control) => { control.disabled = true; });
+    setWordFeedbackBusy(true);
     try { await saveWordFeedback(button.dataset.wordFeedback); }
-    catch { wordGloss.textContent = "状态没有保存；原来的判断保持不变。"; }
-    finally { controls.forEach((control) => { control.disabled = false; }); }
+    catch {
+      wordOutcome.hidden = false;
+      wordOutcome.textContent = "没有保存；原来的状态保持不变。";
+    } finally { setWordFeedbackBusy(false); }
   }));
+  wordUndo.addEventListener("click", async (event) => {
+    if (!event.isTrusted || !selectedWord) return;
+    setWordFeedbackBusy(true);
+    try { await saveWordFeedback("undo", { undo: true }); }
+    catch {
+      wordOutcome.hidden = false;
+      wordOutcome.textContent = "撤销失败；刚才保存的状态仍然有效。";
+    } finally { setWordFeedbackBusy(false); }
+  });
   panelPrimary.addEventListener("click", (event) => {
     if (!event.isTrusted) return;
     if (sessionTakeoverRequired) {
@@ -1830,22 +2034,45 @@
       retryLearning();
       return;
     }
-    if (enabled || preparing || subtitleActive) {
-      disable("user_disabled");
-      return;
-    }
     if (["failed", "degraded"].includes(subtitleState)) {
       retrySubtitles();
       return;
     }
-    activate();
+    if (enabled || preparing || subtitleActive) {
+      disable("user_disabled");
+      return;
+    }
+    retrySubtitles();
   });
+  function handleViewportGeometryChange() {
+    syncVideoBounds();
+    if (host.dataset.videoVisible === "false" && activeInteraction) {
+      activeInteraction.pauseOwned = false;
+      finalizeInteraction("technical_failure", "player_not_visible");
+    }
+  }
+
   document.addEventListener("visibilitychange", () => {
     if (document.hidden && activeInteraction) finalizeInteraction("technical_failure", "page_hidden");
   });
+  document.addEventListener("pointerdown", (event) => {
+    if (event.composedPath().includes(host)) return;
+    if (!panelOpen && wordPanel.hidden) return;
+    panelOpen = false;
+    closeWordPanel();
+    renderStatus();
+  }, true);
   document.addEventListener("keydown", (event) => {
     if (!event.isTrusted || isTypingTarget(event.target)) return;
     const key = event.key.toLocaleLowerCase();
+    if (!activeInteraction && event.key === "Escape" && (panelOpen || !wordPanel.hidden)) {
+      event.preventDefault();
+      event.stopPropagation();
+      panelOpen = false;
+      closeWordPanel();
+      renderStatus();
+      return;
+    }
     if (!activeInteraction) {
       if (key === "s" && !caption.hidden && currentCaptionRange) {
         event.preventDefault();
@@ -1875,10 +2102,10 @@
   document.addEventListener("fullscreenchange", () => {
     const target = document.fullscreenElement || document.documentElement;
     if (host.parentElement !== target) target.appendChild(host);
-    requestAnimationFrame(syncVideoBounds);
+    requestAnimationFrame(handleViewportGeometryChange);
   });
-  window.addEventListener("resize", syncVideoBounds, { passive: true });
-  window.addEventListener("scroll", syncVideoBounds, { passive: true });
+  window.addEventListener("resize", handleViewportGeometryChange, { passive: true });
+  window.addEventListener("scroll", handleViewportGeometryChange, { passive: true });
   window.addEventListener("yt-navigate-finish", routeChanged);
   window.addEventListener("popstate", routeChanged);
   setInterval(() => { routeChanged(); manageAutoEnable(); syncVideoBounds(); }, 1000);

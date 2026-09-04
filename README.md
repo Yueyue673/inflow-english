@@ -16,7 +16,7 @@ It does **not** wait for Python, `yt-dlp`, ASR or a model before showing caption
 
 The current release is a **public source alpha**, not yet a Chrome Web Store listing.
 
-1. Download `InFlow-English-Chrome-0.2.5.zip` and its checksum from the matching [GitHub Release](https://github.com/Yueyue673/inflow-english/releases).
+1. Download `InFlow-English-Chrome-0.2.6.zip` and its checksum from the matching [GitHub Release](https://github.com/Yueyue673/inflow-english/releases).
 2. Extract it into a stable folder.
 3. Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select that folder.
 4. Open an ordinary English YouTube watch page and refresh already-open tabs once.
@@ -63,9 +63,9 @@ explicit opt-in
 
 ![InFlow natural-phrase learning card](docs/images/learning-card.png)
 
-The teaching card does not force a known/familiar/unclear answer. `再听一遍` is counted separately from familiarity. `这个义项以后不用解释` is an explicit, reversible suppression signal.
+The teaching card does not force a known/familiar/unclear answer. `再听一遍` is counted separately from familiarity. `以后跳过此义项` is an explicit, reversible suppression signal. Subtitle word-state edits keep their result visible and offer `撤销`.
 
-This layer remains experimental because one completed interaction does not prove durable learning. Long-video active learning is feature-flagged off in production while real-window quality work continues.
+This layer remains experimental because one completed interaction does not prove durable learning. Long-video active learning is feature-flagged off in production while real-window quality work continues. Its translation backend defaults to local Argos; Google or model endpoints require explicit service configuration and follow the disclosures in [Privacy](PRIVACY.md).
 
 ## Supported scope
 
@@ -121,6 +121,7 @@ python -m wn download oewn:2024
 python -m playwright install chromium
 python -m unittest discover -s tests -p "test_*.py" -q
 python tools/build_extension.py
+python tools/build_extension.py --store-first-upload
 ```
 
 The browser contracts cover standalone/offline captions, ads, SPA navigation, bounded failure, retry, closed-shadow privacy, explicit learning opt-in, the 8-second gate, playback ownership and event replay. Tests use isolated data roots.
@@ -129,10 +130,10 @@ See [Contributing](CONTRIBUTING.md) and [Troubleshooting](docs/TROUBLESHOOTING.m
 
 ## Release status
 
-- Extension: `0.2.5`
+- Extension: `0.2.6`
 - Adaptive policy: `adaptive-v5`
 - Profile schema: `3`
-- Reducer: `rules-v5`
+- Reducer: `rules-v6`
 - VideoPack builder: `1.9.2`
 - License: MIT
 

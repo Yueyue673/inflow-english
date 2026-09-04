@@ -23,6 +23,8 @@ VIDEO_ID = "abcdefghijk"
 URL = f"https://www.youtube.com/watch?v={VIDEO_ID}"
 SECOND_VIDEO_ID = "lmnopqrstuv"
 SECOND_URL = f"https://www.youtube.com/watch?v={SECOND_VIDEO_ID}"
+PLAYING_MISSING_VIDEO_ID = "nocapplay01"
+PLAYING_MISSING_URL = f"https://www.youtube.com/watch?v={PLAYING_MISSING_VIDEO_ID}"
 SPA_VIDEO_ID = "wxyzABCDE12"
 SPA_URL = f"https://www.youtube.com/watch?v={SPA_VIDEO_ID}"
 
@@ -61,6 +63,16 @@ const video = document.querySelector('video');
 Object.defineProperties(video, {{ duration: {{ value: 60, configurable: true }}, currentTime: {{ value: 0.5, writable: true, configurable: true }}, paused: {{ value: true, configurable: true }}, ended: {{ value: false, configurable: true }} }});
 </script></body></html>"""
 
+HTML_PLAYING_MISSING = f"""<!doctype html><html><head><meta charset='utf-8'><title>Playing no captions fixture</title></head><body>
+<div id='movie_player'></div><video class='html5-main-video'></video>
+<script>
+globalThis.fixtureResponse = {{ videoDetails: {{ videoId: '{PLAYING_MISSING_VIDEO_ID}', title: 'Playing no captions', lengthSeconds: '60' }}, captions: {{ playerCaptionsTracklistRenderer: {{ captionTracks: [] }} }} }};
+const player = document.querySelector('#movie_player');
+player.getPlayerResponse = () => globalThis.fixtureResponse;
+const video = document.querySelector('video');
+Object.defineProperties(video, {{ duration: {{ value: 60, configurable: true }}, currentTime: {{ value: 0.5, writable: true, configurable: true }}, paused: {{ value: false, configurable: true }}, ended: {{ value: false, configurable: true }} }});
+</script></body></html>"""
+
 
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="inflow-standalone-caption-") as temporary:
@@ -90,6 +102,7 @@ def main() -> None:
             )
             context.route(URL, lambda route: route.fulfill(status=200, content_type="text/html", body=HTML))
             context.route(SECOND_URL, lambda route: route.fulfill(status=200, content_type="text/html", body=HTML_MISSING))
+            context.route(PLAYING_MISSING_URL, lambda route: route.fulfill(status=200, content_type="text/html", body=HTML_PLAYING_MISSING))
 
             def captions(route):
                 query = parse_qs(urlsplit(route.request.url).query)
@@ -116,16 +129,26 @@ def main() -> None:
             state = page.evaluate("""() => {
               const root = document.querySelector('#inflow-extension-root').shadowRoot;
               const pill = root.querySelector('#pill');
+              const video = document.querySelector('video').getBoundingClientRect();
+              const pillRect = pill.getBoundingClientRect();
               return {
                 pill: pill.textContent,
-                width: pill.getBoundingClientRect().width,
-                height: pill.getBoundingClientRect().height,
+                dock: document.querySelector('#inflow-extension-root').dataset.dock,
+                pill_left: pillRect.left,
+                video_right: video.right,
+                width: pillRect.width,
+                height: pillRect.height,
                 english: root.querySelector('#captionEnglish').textContent,
                 chinese: root.querySelector('#captionChinese').textContent,
                 caption_hidden: root.querySelector('#caption').hidden,
                 panel: root.querySelector('#panelMessage').textContent,
               };
             }""")
+            page.evaluate("""() => { document.body.style.minHeight='1800px'; scrollTo(0,700); }""")
+            page.wait_for_function("""() => { const host=document.querySelector('#inflow-extension-root'); const pill=host?.shadowRoot?.querySelector('#pill'); return host?.dataset.videoVisible === 'false' && getComputedStyle(pill).display === 'none'; }""", timeout=2_000)
+            page.evaluate("scrollTo(0,0)")
+            page.wait_for_function("""() => { const host=document.querySelector('#inflow-extension-root'); const pill=host?.shadowRoot?.querySelector('#pill'); return host?.dataset.videoVisible === 'true' && getComputedStyle(pill).display !== 'none' && pill.textContent === 'InFlow 字幕已就绪'; }""", timeout=2_000)
+            viewport_hide_restore_ok = True
             ad_time_before = page.locator("video").evaluate("video => video.currentTime")
             page.locator("#movie_player").evaluate("player => player.classList.add('ad-showing')")
             try:
@@ -221,20 +244,36 @@ def main() -> None:
             retry_ms = round((time.perf_counter() - retry_started) * 1000)
             recovered_panel = second_host.locator("#panelMessage").inner_text()
             runtime_metrics = service_worker.evaluate("""async () => { const [tab]=await chrome.tabs.query({active:true,currentWindow:true}); const state=await chrome.tabs.sendMessage(tab.id,{type:'inflow:getState'}); return state.performanceMetrics; }""")
+
+            playing_failure_started = time.perf_counter()
+            page.goto(PLAYING_MISSING_URL, wait_until="domcontentloaded", timeout=30_000)
+            page.wait_for_function(
+                "() => document.querySelector('#inflow-extension-root')?.shadowRoot?.querySelector('#pill')?.textContent === 'InFlow 需要查看'",
+                timeout=7_000,
+            )
+            playing_failure_ms = round((time.perf_counter() - playing_failure_started) * 1000)
+            page.wait_for_timeout(1000)
+            stable_failure = service_worker.evaluate("""async () => { const [tab]=await chrome.tabs.query({active:true,currentWindow:true}); return chrome.tabs.sendMessage(tab.id,{type:'inflow:getState'}); }""")
+            if stable_failure.get("subtitleState") != "failed" or stable_failure.get("automaticSubtitleRetryArmed") or stable_failure.get("automaticSubtitleRetryAttempts") != 0:
+                raise AssertionError({"definitive_failure_retried": stable_failure})
             context.close()
 
     if host_ms > 1000:
         raise AssertionError({"host_visible_too_slow_ms": host_ms})
     if ready_ms > 5500:
         raise AssertionError({"page_caption_too_slow_ms": ready_ms})
-    if state["width"] < 110 or state["height"] < 30:
+    if state["width"] < 96 or state["height"] < 30:
         raise AssertionError({"status_not_visible": state})
+    if state["dock"] != "side" or state["pill_left"] < state["video_right"]:
+        raise AssertionError({"status_overlaps_video": state})
     if state["caption_hidden"] or state["english"] != "Every small step matters." or state["chinese"] != "每一个小步骤都很重要。":
         raise AssertionError(state)
     if "本机学习服务未连接" not in state["panel"]:
         raise AssertionError({"offline_copy_missing": state["panel"]})
     if failure_ms > 5000 or "youtube_caption_tracks_missing" not in failure_panel:
         raise AssertionError({"failure_ms": failure_ms, "failure_panel": failure_panel})
+    if playing_failure_ms > 5000:
+        raise AssertionError({"playing_missing_track_failure_too_slow_ms": playing_failure_ms})
     if retry_ms > 5500 or "本机学习服务未连接" not in recovered_panel:
         raise AssertionError({"retry_ms": retry_ms, "recovered_panel": recovered_panel})
     if runtime_metrics.get("status_visible_ms") is None or runtime_metrics.get("status_visible_ms") > 1000 or runtime_metrics.get("caption_attempt_ms") is None or runtime_metrics.get("caption_attempt_ms") > 5500:
@@ -244,6 +283,8 @@ def main() -> None:
         "host_visible_ms": host_ms,
         "caption_ready_ms": ready_ms,
         "failure_visible_ms": failure_ms,
+        "playing_missing_track_failure_ms": playing_failure_ms,
+        "definitive_failure_retried": False,
         "automatic_play_retry_ready_ms": retry_ms,
         "runtime_metrics": runtime_metrics,
         "ad_transition_ok": ad_transition_ok,
@@ -252,6 +293,7 @@ def main() -> None:
         "stale_spa_caption_blocked": True,
         "failure_panel": failure_panel,
         "recovered_panel": recovered_panel,
+        "viewport_hide_restore_ok": viewport_hide_restore_ok,
         **state,
     }, ensure_ascii=False, indent=2))
 

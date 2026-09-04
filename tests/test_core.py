@@ -151,6 +151,53 @@ class AdaptiveCoreTests(unittest.TestCase):
         due = parse_time(reopened["items"][first["id"]]["next_window_start"]) + timedelta(seconds=1)
         self.assertGreater(item_priority(first, reopened["items"][first["id"]], due), -1000)
 
+    def test_subtitle_state_edit_undo_restores_exact_prior_state(self):
+        item = deepcopy(CONTENT["items"][0])
+        content = {"items": [item]}
+        now = utc_now()
+        profile = apply_interaction(
+            new_profile(content),
+            item["id"],
+            outcome="completed",
+            dwell_ms=6000,
+            phrase_confirmed=True,
+            replays=0,
+            now=now - timedelta(hours=24),
+        )
+        key = knowledge_key_for_item(item)
+        occurrence_fields = ("self_report_status", "explicit_known", "aural_stage", "confidence", "next_window_start", "next_window_end")
+        before_state = {field: deepcopy(profile["items"][item["id"]][field]) for field in occurrence_fields}
+        before_lexical = {field: deepcopy(profile["lexicon"][key][field]) for field in ("status", "explicit_known", "score")}
+        known = apply_lexicon_feedback(
+            profile,
+            knowledge_key=key,
+            surface=item["surface"],
+            gloss_zh=item["gloss_zh"],
+            feedback="known",
+            source="subtitle",
+            now=now,
+        )
+        restored = apply_lexicon_feedback(
+            known,
+            knowledge_key=key,
+            surface=item["surface"],
+            gloss_zh=item["gloss_zh"],
+            feedback="undo",
+            source="subtitle",
+            now=now + timedelta(seconds=1),
+        )
+        lexical = restored["lexicon"][key]
+        state = restored["items"][item["id"]]
+        for field, value in before_lexical.items():
+            self.assertEqual(lexical[field], value, field)
+        for field, value in before_state.items():
+            self.assertEqual(state[field], value, field)
+        self.assertIsNone(lexical["state_edit_restore"])
+        self.assertNotIn("undo", lexical["feedback_counts"])
+        self.assertEqual(lexical["evidence"][-1]["kind"], "EXPLICIT_STATE_RESET")
+        self.assertEqual(lexical["evidence"][-1]["intent"], "subtitle_state_undo")
+        self.assertEqual(lexical["evidence"][-1]["restored_status"], before_lexical["status"])
+
     def test_schema_two_lexicon_is_archived_and_occurrence_status_is_preserved(self):
         item = deepcopy(CONTENT["items"][0])
         content = {"items": [item]}
@@ -179,6 +226,22 @@ class AdaptiveCoreTests(unittest.TestCase):
         self.assertNotIn(old_key, migrated["lexicon"])
         self.assertEqual(migrated["lexicon"][new_key]["status"], "familiar")
         self.assertEqual(migrated["items"][item["id"]]["knowledge_key"], new_key)
+
+    def test_ensure_profile_never_stamps_an_old_reducer_without_replay(self):
+        profile = new_profile(CONTENT)
+        profile["reducer_version"] = "rules-v5"
+        normalized = ensure_profile(profile, CONTENT)
+        self.assertEqual(normalized["reducer_version"], "rules-v5")
+
+    def test_rebuild_projection_includes_adaptive_cooldown_fields(self):
+        from rebuild_profile import comparable_projection, diff_values
+
+        profile = new_profile(CONTENT)
+        changed = deepcopy(profile)
+        changed["adaptive"]["reason"] = "three_session_skip_trend"
+        changed["adaptive"]["last_changed_at"] = "2026-09-04T12:00:00Z"
+        diffs = diff_values(comparable_projection(profile), comparable_projection(changed))
+        self.assertEqual({row["path"] for row in diffs}, {"adaptive.reason", "adaptive.last_changed_at"})
 
     def test_vocabulary_frontier_starts_only_after_four_explicit_signals(self):
         profile = new_profile({"items": []})
@@ -339,6 +402,7 @@ class AdaptiveCoreTests(unittest.TestCase):
             replays=0,
             now=now - timedelta(hours=24),
         )
+        before_probe = deepcopy(profile["items"]["refine"])
         result = apply_probe_result(
             profile,
             "refine",
@@ -357,6 +421,9 @@ class AdaptiveCoreTests(unittest.TestCase):
         self.assertEqual(state["assisted_probe_count"], 1)
         self.assertEqual(state["evidence"][-1]["evidence_quality"], "ASSISTED_PRACTICE")
         self.assertFalse(state["evidence"][-1]["first_presentation"])
+        for field in ("aural_stage", "confidence", "last_probe_at", "last_probe_result", "next_window_start", "next_window_end"):
+            self.assertEqual(state[field], before_probe[field], field)
+        self.assertIn("refine:followup-sentence-v1", state["used_probe_variants"])
 
     def test_probe_skip_and_technical_failure_leave_profile_unchanged(self):
         profile = new_profile(CONTENT)

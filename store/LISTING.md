@@ -24,7 +24,7 @@ InFlow English works inside ordinary YouTube watch pages.
 - Stops waiting after a bounded timeout. If no supported track is available, YouTube keeps playing and InFlow offers a retry.
 - Works without a Python backend for captions and replay.
 
-An optional experimental local learning mode can be enabled separately. It requests access to `127.0.0.1:8767` only after the user explicitly enables it. Automatic teaching pauses are off by default.
+An optional experimental local learning mode can be enabled separately. It requests access to `127.0.0.1:8767` only after the user explicitly enables it; the current watch URL, playback timing and learning actions then go to that local service. Translation defaults to local Argos. A service administrator can explicitly configure a network translation provider, in which case disclosed English caption text is sent to that provider. Automatic teaching pauses are off by default.
 
 ## Category
 
@@ -41,7 +41,7 @@ Content support: English YouTube videos
 - Screenshot 1: `store/assets/01-bilingual-captions.png` — 1280×800
 - Screenshot 2: `store/assets/02-learning-card.png` — 1280×800
 
-The screenshots are direct product captures with neutral padding only; they are not feature mockups.
+The screenshots are direct 1280×800 full-viewport product captures with square corners; they are not padded, cropped, stretched or mocked up.
 
 ## Permission justifications
 
@@ -55,7 +55,7 @@ Runs the caption UI only on YouTube pages and requests the current video's YouTu
 
 ### Optional host: `http://127.0.0.1:8767/*`
 
-Used only for the separately enabled experimental local learning service. It is not requested during installation. Chrome asks for it after the user turns on automatic learning.
+Used only for the separately enabled experimental local learning service. It is not requested during installation. Chrome asks for it after the user turns on automatic learning; the current watch URL/video ID, playback timing and explicit learning actions are then sent to this loopback endpoint.
 
 ## Privacy practices draft
 
@@ -65,12 +65,14 @@ Used only for the separately enabled experimental local learning service. It is 
 - Authentication information: not collected
 - Personal communications: not collected
 - Location: not collected
-- Web history: not collected
-- User activity: the extension processes the current YouTube page and caption timing locally to provide its single purpose; no analytics or cloud telemetry
-- Website content: current caption text is processed in the current tab and not sent to an InFlow cloud service
+- Web history: collected for core functionality — the current YouTube watch URL/video ID is processed in tab memory; after explicit learning opt-in it is sent to the user's loopback service and may be stored in local pack/session metadata
+- User activity: collected for core functionality — current playback timing, replay, skip and explicit learning/word-state actions are processed locally; no analytics or cloud telemetry
+- Website content: collected for core functionality — current caption text is processed in the tab and, after explicit learning opt-in, by the user's loopback service
+- Default third-party translation: none — the learning service defaults to local Argos
+- Optional administrator-configured sharing: if `INFLOW_TRANSLATION_BACKEND=google` or an OpenAI-compatible backend is explicitly configured, disclosed English caption text is sent to that configured provider
 - Remote code: none
 - Ads: none
-- Selling/transferring data: none
+- Selling data: none
 
 Affirmation: use of any page and caption data is limited to providing or improving the extension's disclosed single purpose and complies with Chrome Web Store Limited Use requirements.
 
@@ -85,13 +87,14 @@ Support URL after repository publication:
 ## Reviewer notes
 
 1. Open an ordinary public English YouTube `/watch?v=` page with captions.
-2. A visible InFlow status appears near the top-right of the video.
+2. When horizontal space is available, the InFlow status appears beside the video; theater/fullscreen uses a compact in-video fallback.
 3. Bilingual captions appear when the player's caption tracks are ready.
 4. Press `S` outside a text field to replay the current natural caption segment.
 5. Test a video without supported caption tracks: within five seconds InFlow shows a recoverable error and does not pause or navigate YouTube.
 6. Experimental local learning is off by default. The optional loopback permission is requested only from its explicit toggle.
+7. For a brand-new Store item, upload the `-CWS-first-upload.zip` asset. It is identical to the development package except that Chrome's first-upload-forbidden development `key` is absent.
 
-The extension does not use cookies permission, browsing history, downloads, clipboard, webRequest, nativeMessaging, `<all_urls>` or remotely hosted code.
+The extension does not use cookies permission, browsing-history permission, downloads, clipboard, webRequest, nativeMessaging, `<all_urls>` or remotely hosted code.
 
 ## External publication blockers
 

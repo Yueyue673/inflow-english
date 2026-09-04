@@ -19,7 +19,7 @@ The extension may contact this service only after the user enables experimental 
 
 - Bind only to `127.0.0.1`.
 - Accept only the configured loopback Host.
-- Allow browser Origin only from the local UI or fixed extension ID.
+- Allow browser Origin only from the local UI, fixed development extension ID, or Store origins explicitly configured in `INFLOW_ALLOWED_EXTENSION_ORIGINS`.
 - Reject other cross-site browser requests.
 - Require `application/json` for writes and cap JSON bodies at 32 KiB.
 - Do not enable wildcard CORS.

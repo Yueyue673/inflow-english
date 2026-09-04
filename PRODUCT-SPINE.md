@@ -24,7 +24,8 @@ A sentence that was hard to catch becomes readable in the flow of the video, and
 2. **Captions never wait for learning.** Page captions are the primary path; localhost, `yt-dlp`, ASR, WordNet and translation are outside first paint.
 3. **Fail soft.** Ads, missing tracks, network failures and an offline local service never pause or break YouTube.
 4. **User owns playback.** Automatic teaching pause is off by default. User play, pause, seek, navigation, page hiding or ads revoke any old resume lease.
-5. **Evidence stays honest.** Teaching, replay, familiarity self-report and explicit “do not explain again” are separate events. None means mastery.
+5. **Actions show consequences.** Open/close labels must match their exact inverse action; word-state saves remain visible and undoable. No control may rely on a database write the user cannot perceive.
+6. **Evidence stays honest.** Teaching, replay, familiarity self-report and explicit “do not explain again” are separate events. None means mastery.
 
 ## Current public slice
 
@@ -50,7 +51,7 @@ User explicitly enables experimental automatic learning
 → “看清了，继续” resumes the video
 ```
 
-`再听一遍` is behavior, not familiarity. `这个义项以后不用解释` is a reversible explicit known override. The teaching card does not require a three-state self-rating.
+`再听一遍` is behavior, not familiarity. `以后跳过此义项` is a reversible explicit known override. The teaching card does not require a three-state self-rating. Subtitle word-state edits state their future effect, remain visible after save and support one-step undo to the exact preceding server-owned state.
 
 ## No-gos
 
@@ -59,6 +60,9 @@ User explicitly enables experimental automatic learning
 - No cookies permission, browsing-history permission, `<all_urls>`, remote code or analytics.
 - No full-video download for long-video progressive work.
 - No automatic claim of a session owned by another tab.
+- No full-video panel or teaching card over the player when a usable side rail exists.
+- No stale fixed surface left floating over comments after the player leaves the viewport.
+- No state-edit control that disappears before showing its effect and undo path.
 - No claim that one teaching interaction proves learning or mastery.
 - No claim of Chrome Web Store availability before the listing is actually approved and readable.
 

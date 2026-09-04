@@ -84,9 +84,10 @@ function itemId(value) {
   assert(text.length >= 1 && text.length <= 300 && !/[\x00-\x1f\x7f]/.test(text), "invalid_item_id");
   return encodeURIComponent(text);
 }
-function familiarity(value) {
+function familiarity(value, source = "") {
   const text = String(value || "");
-  assert(["known", "familiar", "unclear"].includes(text), "invalid_familiarity_feedback");
+  const allowed = source === "subtitle" ? ["known", "familiar", "unclear", "undo"] : ["known", "familiar", "unclear"];
+  assert(allowed.includes(text), "invalid_familiarity_feedback");
   return text;
 }
 function lexicalText(value, kind) {
@@ -177,14 +178,17 @@ async function handle(message, sender) {
       surface: lexicalText(message.surface, "surface"),
       sentence: lexicalSentence(message.sentence),
     }) });
-    case "lexiconFeedback": return api("/api/lexicon/feedback", { method: "POST", body: await ownerBody(sender, {
-      knowledge_key: String(message.knowledge_key || ""),
-      surface: lexicalText(message.surface, "surface"),
-      gloss_zh: lexicalText(message.gloss_zh, "gloss"),
-      sentence: lexicalSentence(message.sentence),
-      familiarity_feedback: familiarity(message.familiarity_feedback),
-      source: String(message.source || "subtitle").slice(0, 40),
-    }) });
+    case "lexiconFeedback": {
+      const source = String(message.source || "subtitle").slice(0, 40);
+      return api("/api/lexicon/feedback", { method: "POST", body: await ownerBody(sender, {
+        knowledge_key: String(message.knowledge_key || ""),
+        surface: lexicalText(message.surface, "surface"),
+        gloss_zh: lexicalText(message.gloss_zh, "gloss"),
+        sentence: lexicalSentence(message.sentence),
+        familiarity_feedback: familiarity(message.familiarity_feedback, source),
+        source,
+      }) });
+    }
     case "setFrequency": {
       const frequency = String(message.frequency || "");
       assert(["low", "medium", "high"].includes(frequency), "invalid_frequency");

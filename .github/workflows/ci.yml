@@ -44,8 +44,10 @@ jobs:
         run: xvfb-run -a python -u -B tests/closed_shadow_security_browser.py
       - name: Native one-shot caption response contract
         run: xvfb-run -a python -u -B tests/native_caption_capture_browser.py
-      - name: Build extension archive
-        run: python tools/build_extension.py --output-dir dist
+      - name: Build extension archives
+        run: |
+          python tools/build_extension.py --output-dir dist
+          python tools/build_extension.py --output-dir dist --store-first-upload
       - uses: actions/upload-artifact@v4
         with:
           name: inflow-chrome-extension

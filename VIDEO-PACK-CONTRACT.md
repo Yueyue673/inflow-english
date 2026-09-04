@@ -11,7 +11,7 @@
 ```python
 builder = VideoPackBuilder(
     packs_root,
-    translator=translator,      # 可省略，默认 Dsh → Google batch → Argos offline
+    translator=translator,      # 可省略，默认 Argos offline；Google/模型必须显式配置
     transcriber=transcriber,    # 可省略，默认 large-v3 → tiny.en 自适应链
     media_tools=media_tools,    # 可省略，默认 SubprocessMediaTools
 )
@@ -260,23 +260,27 @@ dsh --profile headless <纯文本任务>
 
 ### 6.4 翻译降级链
 
-默认 translator identity 是稳定链：
+默认 translator identity 只有本地层：
 
 ```text
-Dsh headless
-→ quota / 非法 JSON / 运行失败
-→ Google Translate 批量标记请求（每批最多 12 条、约 4000 字符）
-→ 超时 / 429 / 标记损坏
-→ Argos Translate en→zh 1.9 离线模型
+Argos Translate en→zh offline
 ```
 
-Google 路径只发送当前待翻译的英文 cue/surface，不发送视频文件、学习账本、凭据或用户资料；代理失败后尝试直连。批量标记必须逐条、按序完整返回，否则整批切到离线层，不逐条制造数百次请求。
+通过 `tools/argos_translate_worker.py` 的受限 JSON 子进程调用：最多 256 条、单条 1500 字符、总量 80,000 字符；`shell=False`、CPU 单线程、无控制台。模型缺失或输入错误立即停止，运行时瞬态只局部重试一次。模型与 Python 路径由本机环境变量配置，不写入公共仓库。翻译前释放 Whisper 模型，phrase ASR 时再按需加载，避免 Chrome、Whisper 与 Argos 同时形成内存峰值。
 
-Argos 位于 Z 盘独立 venv 与模型目录，通过 `tools/argos_translate_worker.py` 的受限 JSON 子进程调用：最多 256 条、单条 1500 字符、总量 80,000 字符；`shell=False`、CPU 单线程、无控制台。模型缺失或输入错误立即停止，运行时瞬态只局部重试一次。翻译前释放 Whisper 模型，phrase ASR 时再按需加载，避免 Chrome、Whisper 与 Argos 同时形成内存峰值。
+只有服务管理员显式设置 `INFLOW_TRANSLATION_BACKEND=google` 时，链才变为：
 
-两条后备都复用代码侧 wordfreq 候选规则，每 cue 最多一个，并继续经过 surface grounding、句界、字幕交叉事实、MP3 时长与无提示 ASR 门。manifest 分别记录 `translator_chain` 与实际 `translator` runtime；启发式结果是低置信候选，不能宣称与 LLM 选词质量等价。经 Agent 逐项复核的正式样片必须生成新的 reviewed pack，不原地修改自动包。
+```text
+Google Translate batch
+→ timeout / 429 / marker failure
+→ Argos offline
+```
 
-Google 无密钥端点没有 SLA，只适合当前私人验证版；公开产品必须改用有契约的翻译服务或随应用正式分发的本地模型。Argos 当前是本机已安装依赖，不等于公开发行包已经包含模型。
+Google 路径只发送当前待翻译的英文 cue/surface，不发送视频文件、学习账本或凭据；该模式没有 SLA，必须按隐私政策披露。批量标记必须逐条、按序完整返回，否则整批切到离线层。显式 OpenAI/DSH 模型同样位于默认翻译层之前，失败后只回到管理员选择的翻译后端。
+
+所有启发式路径复用代码侧 wordfreq 候选规则，每 cue 最多一个，并继续经过 surface grounding、句界、字幕交叉事实、MP3 时长与无提示 ASR 门。manifest 分别记录 `translator_chain` 与实际 `translator` runtime；启发式结果是低置信候选，不能宣称与 LLM 选词质量等价。经 Agent 逐项复核的正式样片必须生成新的 reviewed pack，不原地修改自动包。
+
+Argos 当前是本机已安装依赖，不等于公开发行包已经包含模型。
 
 ## 7. 候选物化（全部由可信代码生成）
 

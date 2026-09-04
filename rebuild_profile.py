@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
 from copy import deepcopy
 from pathlib import Path
 
-from adaptive_core import atomic_write_json, ensure_profile, rebuild_profile_from_events
+from adaptive_core import REDUCER_VERSION, atomic_write_json, ensure_profile, rebuild_profile_from_events
 from progressive_video_pack import verify_window_shard
 from video_pack import verify_pack_directory
 
@@ -37,6 +39,8 @@ def comparable_projection(profile: dict) -> dict:
         "active_sessions": profile.get("active_sessions", {}),
         "adaptive": {
             "reduction": profile["adaptive"]["reduction"],
+            "reason": profile["adaptive"].get("reason"),
+            "last_changed_at": profile["adaptive"].get("last_changed_at"),
             "preference_epoch": profile["adaptive"].get("preference_epoch"),
             "epoch_completed_sessions": profile["adaptive"].get("epoch_completed_sessions"),
             "epoch_comparable_opportunities": profile["adaptive"].get("epoch_comparable_opportunities"),
@@ -142,37 +146,94 @@ def load_combined_content(data_dir: Path) -> dict:
     return merged
 
 
+def acquire_data_directory_lock(data_dir: Path):
+    data_dir.mkdir(parents=True, exist_ok=True)
+    path = data_dir / "server.lock"
+    handle = path.open("a+b")
+    handle.seek(0, os.SEEK_END)
+    if handle.tell() == 0:
+        handle.write(b"0")
+        handle.flush()
+    handle.seek(0)
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (OSError, IOError) as exc:
+        handle.close()
+        raise RuntimeError(f"data_directory_in_use:{data_dir}") from exc
+    return handle
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", type=Path, default=ROOT / "data" / "live")
-    parser.add_argument("--write", action="store_true", help="replace profile.json only after a successful rebuild")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--write", action="store_true", help="replace profile.json only when the current projection already matches")
+    mode.add_argument("--migrate-reducer", action="store_true", help="backup and replay an older reducer into the current reducer")
     args = parser.parse_args()
 
+    lock_handle = None
+    if args.write or args.migrate_reducer:
+        try:
+            lock_handle = acquire_data_directory_lock(args.data_dir)
+        except RuntimeError as exc:
+            raise SystemExit(str(exc)) from exc
+
     content = load_combined_content(args.data_dir)
-    seed = json.loads((ROOT / "seed-profile.json").read_text(encoding="utf-8"))
+    seed_path = ROOT / "seed-profile.json"
+    seed = json.loads(seed_path.read_text(encoding="utf-8")) if seed_path.exists() else {"known_ids": []}
     events = read_events(args.data_dir / "events.jsonl")
     rebuilt = rebuild_profile_from_events(content, events, known_ids=seed.get("known_ids", []))
     existing_path = args.data_dir / "profile.json"
-    existing = json.loads(existing_path.read_text(encoding="utf-8")) if existing_path.exists() else None
-    if existing:
-        existing = ensure_profile(existing, content)
-        if existing.get("legacy_lexicon_v1"):
-            rebuilt["legacy_lexicon_v1"] = deepcopy(existing["legacy_lexicon_v1"])
+    existing_raw = json.loads(existing_path.read_text(encoding="utf-8")) if existing_path.exists() else None
+    existing = ensure_profile(existing_raw, content) if existing_raw else None
+    if existing and existing.get("legacy_lexicon_v1"):
+        rebuilt["legacy_lexicon_v1"] = deepcopy(existing["legacy_lexicon_v1"])
     existing_projection = comparable_projection(existing) if existing else None
     rebuilt_projection = comparable_projection(rebuilt)
     differences = diff_values(existing_projection, rebuilt_projection) if existing else []
     matches = existing is None or not differences
+    migration_allowed = False
+    stored_reducer = str((existing_raw or {}).get("reducer_version") or "")
+    if args.migrate_reducer:
+        stored_match = re.fullmatch(r"rules-v(\d+)", stored_reducer)
+        current_match = re.fullmatch(r"rules-v(\d+)", REDUCER_VERSION)
+        if not existing_raw or not events:
+            raise SystemExit("reducer_migration_requires_profile_and_events")
+        if not stored_match or not current_match or int(stored_match.group(1)) >= int(current_match.group(1)):
+            raise SystemExit(f"unsupported_reducer_migration:{stored_reducer}:{REDUCER_VERSION}")
+        missing_items = sorted(set(existing_raw.get("items", {})) - set(rebuilt.get("items", {})))
+        if missing_items:
+            raise SystemExit(f"reducer_migration_missing_content:{','.join(missing_items[:8])}")
+        migration_allowed = True
     output = {
-        "ok": matches,
+        "ok": matches or migration_allowed,
         "events": len(events),
         "existing": str(existing_path) if existing else None,
         "matches_existing": matches,
         "mismatches": differences[:20],
-        "write_requested": args.write,
+        "write_requested": bool(args.write or args.migrate_reducer),
+        "migration_requested": bool(args.migrate_reducer),
     }
-    if not matches:
+    if differences and not migration_allowed:
         raise SystemExit(json.dumps(output, ensure_ascii=False))
-    if args.write:
+    if args.migrate_reducer:
+        digest = hashlib.sha256(json.dumps(existing_raw, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:12]
+        backup_path = args.data_dir / "backups" / f"profile.{stored_reducer}.pre-{REDUCER_VERSION}.{digest}.json"
+        if not backup_path.exists():
+            atomic_write_json(backup_path, existing_raw)
+        atomic_write_json(existing_path, rebuilt)
+        output["backup"] = str(backup_path)
+        output["written"] = str(existing_path)
+        output["migrated_from"] = stored_reducer
+        output["migrated_to"] = REDUCER_VERSION
+    elif args.write:
         atomic_write_json(existing_path, rebuilt)
         output["written"] = str(existing_path)
     print(json.dumps(output, ensure_ascii=False))

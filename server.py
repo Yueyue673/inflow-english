@@ -22,7 +22,9 @@ from adaptive_core import (
     INTENSITIES,
     INTENSITY_RANK,
     FAMILIARITY_FEEDBACK,
+    LEXICON_STATE_EDITS,
     POLICY_VERSION,
+    REDUCER_VERSION,
     apply_encounter,
     apply_interaction,
     apply_lexicon_feedback,
@@ -45,6 +47,7 @@ from adaptive_core import (
     new_session,
     parse_time,
     profile_view,
+    rebuild_profile_from_events,
     set_explicit_intensity,
     utc_now,
 )
@@ -485,11 +488,41 @@ def load_seed_known_ids() -> list[str]:
     return [item_id for item_id in payload.get("known_ids", []) if item_id in ITEMS]
 
 
+def migrate_profile_reducer(profile: dict[str, Any]) -> dict[str, Any]:
+    stored = str(profile.get("reducer_version") or "")
+    if not stored or stored == REDUCER_VERSION:
+        return ensure_profile(profile, CONTENT)
+    version_match = re.fullmatch(r"rules-v(\d+)", stored)
+    current_match = re.fullmatch(r"rules-v(\d+)", REDUCER_VERSION)
+    if not version_match or not current_match or int(version_match.group(1)) > int(current_match.group(1)):
+        raise RuntimeError(f"unsupported_profile_reducer:{stored}")
+    if not EVENTS_PATH.exists():
+        raise RuntimeError(f"profile_reducer_migration_requires_events:{stored}:{REDUCER_VERSION}")
+    from rebuild_profile import load_combined_content, read_events
+
+    complete_content = load_combined_content(DATA_DIR)
+    events = read_events(EVENTS_PATH)
+    if not events:
+        raise RuntimeError(f"profile_reducer_migration_requires_events:{stored}:{REDUCER_VERSION}")
+    rebuilt = rebuild_profile_from_events(complete_content, events, known_ids=load_seed_known_ids())
+    if profile.get("legacy_lexicon_v1"):
+        rebuilt["legacy_lexicon_v1"] = deepcopy(profile["legacy_lexicon_v1"])
+    missing_items = sorted(set(profile.get("items", {})) - set(rebuilt.get("items", {})))
+    if missing_items:
+        raise RuntimeError(f"profile_reducer_migration_missing_content:{','.join(missing_items[:8])}")
+    profile_digest = hashlib.sha256(json.dumps(profile, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:12]
+    backup_path = DATA_DIR / "backups" / f"profile.{stored}.pre-{REDUCER_VERSION}.{profile_digest}.json"
+    if not backup_path.exists():
+        atomic_write_json(backup_path, profile)
+    commit_state(profile=rebuilt)
+    return rebuilt
+
+
 def load_profile() -> dict[str, Any]:
     recover_transactions()
     if PROFILE_PATH.exists():
         profile = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
-        normalized = ensure_profile(profile, CONTENT)
+        normalized = migrate_profile_reducer(profile)
         active_id = normalized.get("active_session_id")
         if active_id and active_id not in normalized.get("active_sessions", {}).values():
             path = session_path(active_id)
@@ -1738,8 +1771,10 @@ async def set_lexicon_feedback(request: Request) -> dict[str, Any]:
     feedback = str(payload.get("familiarity_feedback") or "")
     source = str(payload.get("source") or "subtitle")
     sentence = str(payload.get("sentence") or "").strip()
-    if feedback not in FAMILIARITY_FEEDBACK:
+    if feedback not in LEXICON_STATE_EDITS:
         raise HTTPException(422, "invalid_familiarity_feedback")
+    if feedback == "undo" and source != "subtitle":
+        raise HTTPException(422, "invalid_lexicon_undo_source")
     if source not in {"subtitle", "mapping", "explicit_no_more_explanations"}:
         raise HTTPException(422, "invalid_lexicon_feedback_source")
     if not re.fullmatch(r"[A-Za-z][A-Za-z'’\-]*(?:\s+[A-Za-z][A-Za-z'’\-]*){0,3}", surface) or len(surface) > 80:
@@ -1758,14 +1793,20 @@ async def set_lexicon_feedback(request: Request) -> dict[str, Any]:
         else:
             if not sentence or len(sentence) > 500 or re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", sentence):
                 raise HTTPException(422, "invalid_lexicon_sentence")
-            derived_key = knowledge_key_for_item({
+            feedback_item = annotate_lexical_identity({
                 "id": f"subtitle:{hashlib.sha256(sentence.encode('utf-8')).hexdigest()[:20]}:{normalize_expression(surface)}",
                 "surface": surface,
                 "phrase_text": sentence,
                 "sentence": sentence,
+                "context_fingerprint": context_id,
             })
+            derived_key = knowledge_key_for_item(feedback_item)
             if requested_key and requested_key != derived_key:
                 raise HTTPException(422, "knowledge_key_mismatch")
+        if feedback == "undo":
+            restore = profile_before.get("lexicon", {}).get(derived_key, {}).get("state_edit_restore")
+            if not isinstance(restore, dict):
+                raise HTTPException(409, "lexicon_state_undo_unavailable")
         event_time = utc_now()
         profile = apply_lexicon_feedback(
             profile_before,
@@ -1785,7 +1826,9 @@ async def set_lexicon_feedback(request: Request) -> dict[str, Any]:
             "replays": 0,
             "source": source[:40],
             "intent": (
-                "subtitle_state_edit"
+                "subtitle_state_undo"
+                if source == "subtitle" and feedback == "undo"
+                else "subtitle_state_edit"
                 if source == "subtitle"
                 else "no_more_explanations"
                 if source == "explicit_no_more_explanations"
@@ -2029,6 +2072,52 @@ async def start_session(session_id: str, request: Request) -> dict[str, Any]:
         return session_view(session, profile)
 
 
+def close_open_interaction_as_technical_failure(
+    session: dict[str, Any],
+    profile: dict[str, Any],
+    *,
+    event_time: datetime,
+    reason: str,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    open_interaction = session.get("open_interaction") or {}
+    if not open_interaction:
+        return profile, None
+    item_id = str(open_interaction.get("item_id") or "")
+    item = next((row for row in session.get("items", []) if row.get("id") == item_id), None)
+    if not item:
+        raise RuntimeError("open_interaction_item_missing")
+    record = {
+        "interaction_id": str(open_interaction.get("interaction_id") or ""),
+        "owner_client_id": open_interaction.get("owner_client_id"),
+        "owner_epoch": int(open_interaction.get("owner_epoch", 0)),
+        "item_id": item_id,
+        "knowledge_key": str(profile.get("items", {}).get(item_id, {}).get("knowledge_key") or knowledge_key_for_item(item)),
+        "outcome": "technical_failure",
+        "familiarity_feedback": None,
+        "dwell_ms": 0,
+        "phrase_confirmed": False,
+        "replays": 0,
+        "technical_failure": True,
+        "preference_epoch": int(profile.get("adaptive", {}).get("preference_epoch", 1)),
+        "failure_reason": reason[:120],
+        "completed_at": isoformat(event_time),
+    }
+    session.setdefault("interactions", {})[item_id] = record
+    session["open_interaction"] = None
+    profile = apply_interaction(
+        profile,
+        item_id,
+        outcome="technical_failure",
+        dwell_ms=0,
+        phrase_confirmed=False,
+        replays=0,
+        familiarity_feedback=None,
+        encounter_already_recorded=item_id in session.get("encountered_ids", []),
+        now=event_time,
+    )
+    return profile, build_event("interaction_completed", record, session_id=session["session_id"], at=event_time)
+
+
 @app.post("/api/sessions/{session_id}/claim")
 async def claim_session(session_id: str, request: Request) -> dict[str, Any]:
     payload = await read_payload(request)
@@ -2083,11 +2172,16 @@ async def claim_session(session_id: str, request: Request) -> dict[str, Any]:
                 probe["completed_at"] = probe_record["completed_at"]
                 session["stage"] = "watch"
                 events.append(build_event("probe_completed", probe_record, session_id=session_id, at=event_time))
+            profile, orphan_event = close_open_interaction_as_technical_failure(
+                session,
+                profile,
+                event_time=event_time,
+                reason="owner_claimed",
+            )
+            if orphan_event:
+                events.append(orphan_event)
             session["owner_client_id"] = client_id
             session["owner_epoch"] = old_owner_epoch + 1
-            if session.get("open_interaction"):
-                session["open_interaction"]["owner_client_id"] = client_id
-                session["open_interaction"]["owner_epoch"] = session["owner_epoch"]
             events.append(
                 build_event(
                     "session_claimed",
@@ -2105,7 +2199,7 @@ async def claim_session(session_id: str, request: Request) -> dict[str, Any]:
                         at=event_time,
                     )
                 )
-            commit_state(session=session, events=events)
+            commit_state(profile=profile if orphan_event else None, session=session, events=events)
         return session_view(session, profile)
 
 

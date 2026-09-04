@@ -1,6 +1,6 @@
 # Chrome extension
 
-This directory is the standalone Manifest V3 extension for InFlow English `0.2.5`.
+This directory is the standalone Manifest V3 extension for InFlow English `0.2.6`.
 
 ## Runtime path
 
@@ -11,7 +11,7 @@ YouTube native timed-text response (captured at document start)
 → closed Shadow DOM captions and replay
 ```
 
-Captions do not require localhost. The optional local learning service is requested only after the user enables experimental automatic learning.
+Captions do not require localhost. The extension processes the current watch URL/video ID in tab memory to bind results to the right video. The optional local learning service is requested only after the user enables experimental automatic learning; the current URL, playback timing and explicit learning actions then go to that loopback service. Translation defaults to local Argos.
 
 ## Permissions
 
@@ -23,7 +23,7 @@ Captions do not require localhost. The optional local learning service is reques
 }
 ```
 
-No cookies, history, downloads, clipboard, webRequest, nativeMessaging, `<all_urls>` or remote code.
+No cookies or browsing-history permission, downloads, clipboard, webRequest, nativeMessaging, `<all_urls>` or remote code.
 
 ## Development install
 
@@ -35,8 +35,9 @@ Run from the repository root:
 
 ```bash
 python tools/build_extension.py
+python tools/build_extension.py --store-first-upload
 ```
 
-The builder uses an exact file allowlist and writes a verified ZIP plus SHA-256 file under `dist/`.
+The first archive keeps the fixed development `key` for the local test ID. The second strips that field and is the only package suitable for a brand-new Chrome Web Store item. Both use the same exact file allowlist and produce a verified ZIP plus SHA-256 file under `dist/`.
 
 See the root [README](../README.md), [extension contract](../EXTENSION-CONTRACT.md), [privacy policy](../PRIVACY.md) and [security model](../SECURITY.md).

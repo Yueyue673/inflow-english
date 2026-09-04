@@ -52,7 +52,7 @@ The local path may enrich the product, but it cannot delay or break the standalo
 
 ### `page-hook.js`
 
-Runs at document start in YouTube's MAIN world on ordinary `/watch` pages only. It wraps the page's existing fetch/XHR calls without changing their return values, copies only successful exact `/api/timedtext` JSON3 responses, and keeps a six-entry/5 MB/two-minute in-memory cache. It cannot call Chrome extension APIs or localhost and never reads cookie values.
+Runs once at document start in YouTube's MAIN world so the hook survives Home/Search → watch SPA navigation. It captures only while the current route is an ordinary `/watch` page, wraps the page's existing fetch/XHR calls without changing their return values, and streams a cloned exact `/api/timedtext` JSON3 response into a six-entry/5 MB/50,000-event/two-minute cache. Oversized clones are cancelled before full buffering. It cannot call Chrome extension APIs or localhost and never reads cookie values.
 
 ### `page-bridge.js`
 
@@ -83,13 +83,15 @@ It never accesses the Chrome extension APIs or localhost.
 - validates Host, Origin, Fetch Metadata, content type and request size;
 - serializes heavy work and bounds pending demand;
 - verifies pack integrity and caches verification only while file stat fingerprints remain unchanged;
-- stores events transactionally and rebuilds derived state;
+- stores events transactionally and rebuilds derived state, including adaptive cooldown fields;
+- backs up and replays older supported reducer profiles before serving; CLI writes require the same cross-process data lock as the server;
+- closes a persisted orphan interaction as a technical failure: same-owner reload through the extension, explicit cross-tab claim server-side before ownership transfer; neither writes familiarity evidence;
 - serves only allowlisted fixed media and validated pack assets;
 - binds only to loopback.
 
 ## Optional model backend
 
-The default VideoPack builder does **not** invoke DSH, DeepSeek, GPT or any exact-sense model. Translation uses the bounded Google/Argos fallback chain; an unresolved sense remains occurrence-scoped provisional.
+The default VideoPack builder does **not** invoke DSH, DeepSeek, GPT, Google Translate or any exact-sense model. Translation defaults to local Argos; network translation requires an explicit backend setting. An unresolved sense remains occurrence-scoped provisional.
 
 A developer may explicitly select an OpenAI-compatible GPT endpoint:
 
@@ -124,10 +126,12 @@ Chinese wording and surface spelling are display data, not stable knowledge iden
 - Completed mapping interaction: `TEACH`, low confidence.
 - Manual replay: behavior count only.
 - Teaching-card continue: no familiarity write.
-- `这个义项以后不用解释`: reversible `EXPLICIT_KNOWN_OVERRIDE`.
+- `以后跳过此义项`: reversible `EXPLICIT_KNOWN_OVERRIDE`.
+- Subtitle word status: visible consequence + append-only `EXPLICIT_STATE_RESET` undo from a server-owned snapshot; lexical status and occurrence scheduling fields return to their exact prior values.
 - Subtitle word-panel state edit: explicit state edit.
 - Immediate or answer-exposed self-report: not clean evidence.
 - Delayed three-choice success: at most `WEAK_SUCCESS`.
+- Replayed probe: `ASSISTED_PRACTICE`; consume the variant, but do not change ability counts or memory windows.
 
 ## Long videos
 

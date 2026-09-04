@@ -33,7 +33,7 @@
     <fieldset id="learningSettings">
       <legend>本机学习（实验）</legend>
       <label class="learning-toggle">
-        <span><strong>允许自动教学暂停</strong><small>默认关闭。开启后，连续观看 8 秒才会准备；内容未就绪时不会暂停。</small></span>
+        <span><strong>允许自动教学暂停</strong><small>默认关闭。开启后，当前视频 URL、播放位置和学习操作会交给本机服务；默认使用离线翻译，连续观看 8 秒才准备。</small><small>若服务管理员显式启用 Google/OpenAI 等网络翻译，英文字幕会按该配置发送到相应服务。</small></span>
         <span class="switch"><input id="autoLearning" type="checkbox"><span></span></span>
       </label>
       <div id="frequencySettings">

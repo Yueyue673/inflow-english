@@ -650,6 +650,13 @@ class AdaptiveServerTests(unittest.TestCase):
         started = self.client.post(f"/api/sessions/{created.json()['session_id']}/start", json={"client_id": client_a})
         self.assertEqual(started.status_code, 200, started.text)
         initial_epoch = started.json()["owner_epoch"]
+        item_id = next(row["id"] for row in started.json()["items"] if row["min_intensity"] in {"low", "medium"})
+        opened = self.client.post(
+            f"/api/sessions/{created.json()['session_id']}/interactions/start",
+            json={"client_id": client_a, "owner_epoch": initial_epoch, "item_id": item_id},
+        )
+        self.assertEqual(opened.status_code, 200, opened.text)
+        interaction_id = opened.json()["interaction"]["interaction_id"]
 
         same_owner = self.client.post("/api/sessions", json={"qa": True, "client_id": client_a})
         self.assertTrue(same_owner.json()["owner_match"])
@@ -663,18 +670,111 @@ class AdaptiveServerTests(unittest.TestCase):
         unchanged = self.client.get(f"/api/sessions/{created.json()['session_id']}").json()
         self.assertEqual(unchanged["owner_client_id"], client_a)
         self.assertEqual(unchanged["owner_epoch"], initial_epoch)
+        data_root = Path(self.temp.name)
+        profile_before_claim = json.loads((data_root / "profile.json").read_text(encoding="utf-8"))["items"][item_id]
 
         claimed = self.client.post(f"/api/sessions/{created.json()['session_id']}/claim", json={"client_id": client_b})
         self.assertEqual(claimed.status_code, 200, claimed.text)
         self.assertEqual(claimed.json()["owner_client_id"], client_b)
         self.assertEqual(claimed.json()["owner_epoch"], initial_epoch + 1)
+        self.assertIsNone(claimed.json()["open_interaction"])
+        claimed_session = json.loads((data_root / "sessions" / f"{created.json()['session_id']}.json").read_text(encoding="utf-8"))
+        self.assertEqual(claimed_session["interactions"][item_id]["outcome"], "technical_failure")
+        self.assertEqual(claimed_session["interactions"][item_id]["failure_reason"], "owner_claimed")
+        forged = self.client.post(
+            f"/api/sessions/{created.json()['session_id']}/interactions/{item_id}/complete",
+            json={
+                "client_id": client_b,
+                "owner_epoch": initial_epoch + 1,
+                "interaction_id": interaction_id,
+                "outcome": "completed",
+                "dwell_ms": 6000,
+                "phrase_confirmed": True,
+                "replays": 0,
+                "familiarity_feedback": "known",
+            },
+        )
+        self.assertEqual(forged.status_code, 200, forged.text)
+        self.assertIsNone(forged.json()["open_interaction"])
+        forged_session = json.loads((data_root / "sessions" / f"{created.json()['session_id']}.json").read_text(encoding="utf-8"))
+        self.assertEqual(forged_session["interactions"][item_id]["outcome"], "technical_failure")
+        self.assertIsNone(forged_session["interactions"][item_id]["familiarity_feedback"])
+        self.assertEqual(forged.json()["interaction_summary"]["technical_failure"], 1)
+        profile_after_claim = json.loads((data_root / "profile.json").read_text(encoding="utf-8"))["items"][item_id]
+        self.assertEqual(profile_after_claim["teach_count"], profile_before_claim["teach_count"])
+        events = [json.loads(line) for line in (data_root / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+        completed_events = [event for event in events if event["type"] == "interaction_completed" and event["data"].get("interaction_id") == interaction_id]
+        self.assertEqual(len(completed_events), 1)
+        self.assertEqual(completed_events[0]["data"]["outcome"], "technical_failure")
+        self.assertIsNone(completed_events[0]["data"]["familiarity_feedback"])
+
+    def test_server_replays_and_backs_up_an_old_reducer_before_serving(self):
+        data_root = Path(self.temp.name)
+        now = self.server.utc_now()
+        teach_at = now - timedelta(hours=24)
+        events = [
+            self.server.build_event("profile_created", {}, at=teach_at - timedelta(minutes=1)),
+            self.server.build_event(
+                "interaction_completed",
+                {
+                    "item_id": "refine",
+                    "outcome": "completed",
+                    "dwell_ms": 6000,
+                    "phrase_confirmed": True,
+                    "replays": 0,
+                    "familiarity_feedback": None,
+                },
+                session_id="a" * 32,
+                at=teach_at,
+            ),
+            self.server.build_event(
+                "probe_completed",
+                {
+                    "probe_id": "probe-assisted-migration",
+                    "item_id": "refine",
+                    "variant_id": "refine:followup-sentence-v1",
+                    "outcome": "correct",
+                    "audio_confirmed": True,
+                    "choice_count": 3,
+                    "response_ms": 1800,
+                    "delay_hours": 24,
+                    "presentation_count": 2,
+                },
+                session_id="a" * 32,
+                at=now,
+            ),
+        ]
+        correct = self.server.rebuild_profile_from_events(
+            self.server.CONTENT,
+            events,
+            known_ids=self.server.load_seed_known_ids(),
+        )
+        stale = json.loads(json.dumps(correct))
+        stale["reducer_version"] = "rules-v5"
+        stale_state = stale["items"]["refine"]
+        stale_state["last_probe_at"] = self.server.isoformat(now)
+        stale_state["last_probe_result"] = "correct"
+        stale_state["next_window_start"] = self.server.isoformat(now + timedelta(days=6))
+        stale_state["next_window_end"] = self.server.isoformat(now + timedelta(days=10))
+        self.server.atomic_write_json(data_root / "profile.json", stale)
+        event_bytes = ("\n".join(json.dumps(event, ensure_ascii=False) for event in events) + "\n").encode("utf-8")
+        (data_root / "events.jsonl").write_bytes(event_bytes)
+
+        migrated = self.server.load_profile()
+        self.assertEqual(migrated["reducer_version"], "rules-v6")
+        self.assertEqual(migrated["items"]["refine"]["next_window_start"], correct["items"]["refine"]["next_window_start"])
+        self.assertEqual(migrated["items"]["refine"]["last_probe_at"], correct["items"]["refine"]["last_probe_at"])
+        self.assertEqual((data_root / "events.jsonl").read_bytes(), event_bytes)
+        backups = list((data_root / "backups").glob("profile.rules-v5.pre-rules-v6.*.json"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(json.loads(backups[0].read_text(encoding="utf-8"))["reducer_version"], "rules-v5")
 
     def test_profile_intensity_and_full_session_persist(self):
         health = self.client.get("/api/health")
         self.assertEqual(health.status_code, 200)
         self.assertEqual(health.json()["items"], 16)
         self.assertEqual(health.json()["builder_version"], "video-pack-builder/1.9.2")
-        self.assertEqual(health.json()["extension_version"], "0.2.5")
+        self.assertEqual(health.json()["extension_version"], "0.2.6")
         self.assertTrue(health.json()["progressive_learning_enabled"])
 
         profile = self.client.get("/api/profile").json()
@@ -811,10 +911,49 @@ class AdaptiveServerTests(unittest.TestCase):
         self.client.put("/api/profile/intensity", json={"intensity": "high"})
         session = self.client.post("/api/sessions", json={"qa": True}).json()
         self.assertNotIn(entry["knowledge_key"], {row["knowledge_key"] for row in session["items"]})
+        reset = self.client.post(
+            "/api/lexicon/feedback",
+            json={
+                "client_id": TEST_CLIENT_ID,
+                "knowledge_key": entry["knowledge_key"],
+                "surface": item["surface"],
+                "gloss_zh": item["gloss_zh"],
+                "familiarity_feedback": "undo",
+                "source": "subtitle",
+            },
+        )
+        self.assertEqual(reset.status_code, 200, reset.text)
+        self.assertEqual(reset.json()["status"], "unseen")
+        self.assertFalse(reset.json()["explicit_known"])
+        unavailable = self.client.post(
+            "/api/lexicon/feedback",
+            json={
+                "client_id": TEST_CLIENT_ID,
+                "knowledge_key": entry["knowledge_key"],
+                "surface": item["surface"],
+                "gloss_zh": item["gloss_zh"],
+                "familiarity_feedback": "undo",
+                "source": "subtitle",
+            },
+        )
+        self.assertEqual(unavailable.status_code, 409)
+        forbidden_reset = self.client.post(
+            "/api/lexicon/feedback",
+            json={
+                "client_id": TEST_CLIENT_ID,
+                "knowledge_key": entry["knowledge_key"],
+                "surface": item["surface"],
+                "gloss_zh": item["gloss_zh"],
+                "familiarity_feedback": "undo",
+                "source": "mapping",
+            },
+        )
+        self.assertEqual(forbidden_reset.status_code, 422)
         events = [json.loads(line) for line in (Path(self.temp.name) / "events.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
         feedback_events = [event for event in events if event["type"] == "lexicon_feedback"]
-        self.assertEqual(len(feedback_events), 1)
-        self.assertEqual(feedback_events[0]["data"]["familiarity_feedback"], "known")
+        self.assertEqual(len(feedback_events), 2)
+        self.assertEqual([event["data"]["familiarity_feedback"] for event in feedback_events], ["known", "undo"])
+        self.assertEqual(feedback_events[-1]["data"]["intent"], "subtitle_state_undo")
 
     def test_no_more_explanations_is_an_explicit_known_override(self):
         item = next(row for row in self.server.CONTENT["items"] if row["surface"].casefold() == "reconnaissance")
@@ -839,6 +978,35 @@ class AdaptiveServerTests(unittest.TestCase):
         self.assertEqual(evidence["intent"], "no_more_explanations")
         events = [json.loads(line) for line in (Path(self.temp.name) / "events.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
         self.assertEqual(events[-1]["data"]["intent"], "no_more_explanations")
+
+    def test_new_resolved_subtitle_word_accepts_feedback_with_lookup_key(self):
+        class Translator:
+            def translate_all(self, _cues):
+                return {"surface": "光合作用", "sentence": "植物利用光合作用把阳光转化为能量。"}
+
+        sentence = "Plants use photosynthesis to turn sunlight into energy."
+        with mock.patch.object(self.server, "LEXICON_TRANSLATOR", Translator()):
+            lookup = self.client.post(
+                "/api/lexicon/lookup",
+                json={"client_id": TEST_CLIENT_ID, "surface": "photosynthesis", "sentence": sentence},
+            )
+        self.assertEqual(lookup.status_code, 200, lookup.text)
+        self.assertTrue(lookup.json()["knowledge_key"].startswith("kv1|"), lookup.json())
+        saved = self.client.post(
+            "/api/lexicon/feedback",
+            json={
+                "client_id": TEST_CLIENT_ID,
+                "knowledge_key": lookup.json()["knowledge_key"],
+                "surface": "photosynthesis",
+                "gloss_zh": lookup.json()["gloss_zh"],
+                "sentence": sentence,
+                "familiarity_feedback": "known",
+                "source": "subtitle",
+            },
+        )
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertEqual(saved.json()["knowledge_key"], lookup.json()["knowledge_key"])
+        self.assertEqual(saved.json()["status"], "known")
 
     def test_ambiguous_subtitle_word_does_not_merge_across_contexts(self):
         class Translator:

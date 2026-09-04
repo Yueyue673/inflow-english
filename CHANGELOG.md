@@ -2,6 +2,51 @@
 
 All notable public changes are documented here.
 
+## 0.2.6 — 2026-09-05
+
+### Fixed from real-use feedback
+
+- Dock the status, word panel and teaching card beside the video when horizontal space exists; theater/fullscreen keeps a compact in-video fallback.
+- Make status and word panels mutually exclusive; page click and Escape close transient panels.
+- Align `关闭本视频` / `开启本视频` labels with their exact inverse actions in both the page surface and popup.
+- Keep subtitle word-state results visible, explain their future effect and add append-only `撤销` that restores the exact previous scheduling state from a server-owned snapshot.
+- Accept feedback for a newly resolved WordNet subtitle key instead of incorrectly returning `knowledge_key_mismatch`.
+- Add a visible `跳过这次` action to the mapping stage and keep all four teaching actions in a fixed, unclipped side action area.
+- Hide fixed InFlow surfaces while the player is outside the usable viewport and restore them when it returns; an active teaching step scrolled out of view ends as a technical interruption without auto-resume.
+- Reduce the caption background footprint and move it closer to the control-safe lower edge.
+
+### Reliability and safety
+
+- Keep the native timed-text hook installed across YouTube Home/Search → watch SPA navigation while capturing only on `/watch`.
+- Bind each word lookup/feedback response to an immutable panel-selection token so two `bank` contexts cannot mix key, gloss and sentence.
+- Abort stale learning activation after every await; a close during bootstrap cannot start a later import, and a prepare response arriving after close is immediately cancelled.
+- Prevent an old video bridge from switching or restoring caption tracks after SPA navigation to a new video.
+- Make player visibility a hard prerequisite for the 8-second learning gate and teaching pause; scrolling away clears pause ownership and cannot resume playback invisibly.
+- Stream and cancel oversized response clones before buffering; cap payloads at 5 MB, 50,000 events and 10,000 segments per event.
+- Recover a same-owner stale interaction as a technical failure; an explicit cross-tab claim now closes its orphan server-side before ownership transfers, so the claimant cannot convert it into completed/known evidence.
+- Restart an in-flight subtitle task when learning is turned off instead of retaining a dead Promise.
+- Do not let an advertisement consume the one automatic subtitle retry.
+- Settle definitive no-caption failures within five seconds instead of automatically running a second four-second attempt.
+- Remove the unsupported three-hour standalone-caption cutoff; keep a 24-hour sanity bound while payload limits remain authoritative.
+- Include adaptive `reason` and `last_changed_at` in profile rebuild comparison so behaviorally different profiles cannot report a false match.
+- Never stamp an old profile with a new reducer version without replay: server startup backs up and replays older ledgers, while missing events/content or a future reducer fails closed.
+- Require the same cross-process `server.lock` before `rebuild_profile --write` or `--migrate-reducer`, preventing compare/write from overwriting concurrent API events.
+- Keep replayed/assisted probes as practice: record the used variant and practice evidence without moving memory windows.
+
+### Distribution
+
+- Default optional-learning translation to local Argos. Google translation now requires explicit `INFLOW_TRANSLATION_BACKEND=google` configuration and matching privacy disclosure.
+- Replace padded Store art with direct 1280×800 full-viewport captures.
+- Correct the Store privacy draft to disclose local Web history, website content and user-activity processing.
+- Add a separate `-CWS-first-upload.zip` build that strips the development-only manifest `key` required to pass a brand-new Chrome Web Store upload.
+- Keep the development ZIP and fixed local test ID unchanged.
+- Build and verify both archives in GitHub Actions.
+
+### Versioning
+
+- Extension `0.2.6`.
+- Reducer `rules-v6`.
+
 ## 0.2.5 — 2026-09-04
 
 ### Fixed in signed-in Chrome

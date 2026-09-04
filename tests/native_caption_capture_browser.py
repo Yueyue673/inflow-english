@@ -20,6 +20,7 @@ from tests.live_data_guard import snapshot_live_tree
 
 SOURCE_EXTENSION = ROOT / "extension"
 VIDEO_ID = "captur1234x"
+HOME_URL = "https://www.youtube.com/"
 URL = f"https://www.youtube.com/watch?v={VIDEO_ID}"
 ENGLISH = {"events": [{"tStartMs": 0, "dDurationMs": 4000, "segs": [{"utf8": "The native response is captured once."}]}]}
 CHINESE = {"events": [{"tStartMs": 0, "dDurationMs": 4000, "segs": [{"utf8": "原生响应只捕获一次。"}]}]}
@@ -27,9 +28,10 @@ HTML = f"""<!doctype html><html><head><meta charset='utf-8'><title>Native captur
 <div id='movie_player'></div><video class='html5-main-video'></video>
 <script>
 const response={{videoDetails:{{videoId:'{VIDEO_ID}',title:'Native capture',lengthSeconds:'60'}},captions:{{playerCaptionsTracklistRenderer:{{captionTracks:[{{baseUrl:'https://www.youtube.com/api/timedtext?v={VIDEO_ID}&lang=en',languageCode:'en',isTranslatable:true}}]}}}}}};
+globalThis.fixtureResponse=null;
 const player=document.querySelector('#movie_player');
 let currentTrack={{languageCode:'en',translationLanguage:{{languageCode:'zh-Hans'}}}};
-player.getPlayerResponse=()=>response;
+player.getPlayerResponse=()=>globalThis.fixtureResponse;
 player.getOption=()=>currentTrack;
 player.setOption=(_group,_name,track)=>{{
   currentTrack=track;
@@ -42,7 +44,12 @@ player.setOption=(_group,_name,track)=>{{
 }};
 const video=document.querySelector('video');
 Object.defineProperties(video,{{duration:{{value:60,configurable:true}},currentTime:{{value:0.5,writable:true,configurable:true}},paused:{{value:false,configurable:true}},ended:{{value:false,configurable:true}}}});
-setTimeout(()=>player.setOption('captions','track',currentTrack),50);
+globalThis.activateFixture=()=>{{
+  globalThis.fixtureResponse=response;
+  history.pushState({{}},'',{json.dumps(URL)});
+  player.setOption('captions','track',currentTrack);
+  window.dispatchEvent(new Event('yt-navigate-finish'));
+}};
 </script></body></html>"""
 
 
@@ -82,7 +89,7 @@ def main() -> None:
                     "--mute-audio",
                 ],
             )
-            context.route(URL, lambda route: route.fulfill(status=200, content_type="text/html", body=HTML))
+            context.route(HOME_URL, lambda route: route.fulfill(status=200, content_type="text/html", body=HTML))
 
             def timed_text(route) -> None:
                 query = parse_qs(urlsplit(route.request.url).query)
@@ -98,7 +105,8 @@ def main() -> None:
 
             context.route("https://www.youtube.com/api/timedtext**", timed_text)
             page = context.pages[0] if context.pages else context.new_page()
-            page.goto(URL, wait_until="domcontentloaded", timeout=30_000)
+            page.goto(HOME_URL, wait_until="domcontentloaded", timeout=30_000)
+            page.evaluate("globalThis.activateFixture()")
             try:
                 page.wait_for_function(
                     """() => {
@@ -113,9 +121,11 @@ def main() -> None:
                 debug = page.evaluate("""() => { const root=document.querySelector('#inflow-extension-root')?.shadowRoot; return {hook:globalThis.__inflowCaptionCaptureV1===true,pill:root?.querySelector('#pill')?.textContent,message:root?.querySelector('#panelMessage')?.textContent,english:root?.querySelector('#captionEnglish')?.textContent,chinese:root?.querySelector('#captionChinese')?.textContent}; }""")
                 context.close()
                 raise AssertionError({"native_capture_not_ready": debug, "requests": requests}) from exc
-            state = page.evaluate("""() => { const root=document.querySelector('#inflow-extension-root').shadowRoot; return {pill:root.querySelector('#pill').textContent,english:root.querySelector('#captionEnglish').textContent,chinese:root.querySelector('#captionChinese').textContent}; }""")
+            state = page.evaluate("""() => { const root=document.querySelector('#inflow-extension-root').shadowRoot; return {hook:globalThis.__inflowCaptionCaptureV1===true,path:location.pathname,pill:root.querySelector('#pill').textContent,english:root.querySelector('#captionEnglish').textContent,chinese:root.querySelector('#captionChinese').textContent}; }""")
             context.close()
 
+    if state.get("hook") is not True or state.get("path") != "/watch":
+        raise AssertionError({"spa_hook_not_active": state})
     if not any(row["lang"] == "en" and not row["tlang"] and row["served"] for row in requests):
         raise AssertionError({"english_native_response_missing": requests})
     if not any(str(row["tlang"]).lower().startswith("zh") and row["served"] for row in requests):

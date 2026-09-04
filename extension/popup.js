@@ -54,13 +54,13 @@ function renderState(state) {
     ? "接管学习"
     : state.learningRetryBlocked
       ? "重试学习"
-    : !state.subtitleActive && ["failed", "degraded"].includes(state.subtitleState)
+    : ["failed", "degraded"].includes(state.subtitleState)
       ? "重试字幕"
       : state.enabled || state.subtitleActive
-        ? "本视频暂停 InFlow"
+        ? "关闭本视频"
         : state.preparing
           ? "取消当前准备"
-          : "现在为本视频启用";
+          : "开启本视频";
 }
 
 async function broadcastSettings() {
@@ -159,11 +159,11 @@ primary.addEventListener("click", async () => {
       ? "inflow:takeoverLearning"
       : pageState.learningRetryBlocked
         ? "inflow:retryLearning"
-      : pageState.enabled || pageState.preparing || pageState.subtitleActive
-        ? "inflow:disable"
-        : ["failed", "degraded"].includes(pageState.subtitleState)
-          ? "inflow:retrySubtitles"
-          : "inflow:activate";
+      : ["failed", "degraded"].includes(pageState.subtitleState)
+        ? "inflow:retrySubtitles"
+        : pageState.enabled || pageState.preparing || pageState.subtitleActive
+          ? "inflow:disable"
+          : "inflow:retrySubtitles";
     renderState(await tab({ type: action }));
   } catch (error) {
     status.textContent = `当前视频没有改变：${error.message}`;
