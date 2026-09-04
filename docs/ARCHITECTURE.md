@@ -52,7 +52,7 @@ The local path may enrich the product, but it cannot delay or break the standalo
 
 ### `page-hook.js`
 
-Runs once at document start in YouTube's MAIN world so the hook survives Home/Search → watch SPA navigation. It captures only while the current route is an ordinary `/watch` page, wraps the page's existing fetch/XHR calls without changing their return values, and streams a cloned exact `/api/timedtext` JSON3 response into a six-entry/5 MB/50,000-event/two-minute cache. Oversized clones are cancelled before full buffering. It cannot call Chrome extension APIs or localhost and never reads cookie values.
+Runs once at document start in YouTube's MAIN world so the hook survives Home/Search → watch SPA navigation. It captures only while the current route is an ordinary `/watch` page, wraps the page's current fetch/XHR functions without changing return values, and streams a cloned exact `/api/timedtext` JSON3 response into a six-entry/5 MB/50,000-event/two-minute cache. Oversized clones are cancelled before full buffering. Automatic-caption off clears the cache and restores the delegated functions; a one-bit YouTube-localStorage marker keeps the hook uninstalled on the next document. It cannot call Chrome extension APIs or localhost and never reads cookie values.
 
 ### `page-bridge.js`
 
@@ -84,6 +84,7 @@ It never accesses the Chrome extension APIs or localhost.
 - serializes heavy work and bounds pending demand;
 - verifies pack integrity and caches verification only while file stat fingerprints remain unchanged;
 - stores events transactionally and rebuilds derived state, including adaptive cooldown fields;
+- records seed known IDs and a bounded item catalog in new events; if `profile.json` is missing, replays the ledger, while historical missing content fails closed;
 - backs up and replays older supported reducer profiles before serving; CLI writes require the same cross-process data lock as the server;
 - closes a persisted orphan interaction as a technical failure: same-owner reload through the extension, explicit cross-tab claim server-side before ownership transfer; neither writes familiarity evidence;
 - serves only allowlisted fixed media and validated pack assets;
@@ -135,6 +136,6 @@ Chinese wording and surface spelling are display data, not stable knowledge iden
 
 ## Long videos
 
-ProgressivePack targets approximately six-minute windows with analysis overlap. Candidates belong to one ownership window. Only the current focus window and one adjacent prefetch window may be prepared; a monotonically increasing focus epoch invalidates stale scheduling after seek.
+ProgressivePack targets approximately six-minute windows with analysis overlap. Candidates belong to one ownership window. Only the current focus window and one adjacent prefetch window may be prepared; a monotonically increasing focus epoch invalidates stale scheduling after seek. Focus writes require the active session owner, and the stored epoch is namespaced by `owner_epoch` so a claimed tab cannot be blocked by the old tab's local counter.
 
 Production active learning for long videos remains off until real-window cue quality and latency gates pass. Standalone captions do not share that restriction.

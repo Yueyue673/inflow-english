@@ -2,6 +2,34 @@
 
 All notable public changes are documented here.
 
+## 0.2.7 — 2026-09-05
+
+### Playback and caption lifecycle
+
+- Reset the eight-second continuous-play gate immediately on seek, pause, page hiding or player leaving the viewport, including before a learning session is enabled.
+- Report the one automatic subtitle retry as consumed (`armed=false`) and hard-limit it by attempt count.
+- Remove array-index-first bilingual alignment; Chinese now requires meaningful time overlap, so unequal segmentation cannot pull in the previous sentence.
+- Persist and obey the automatic-caption capture setting in the MAIN-world hook. Global/current-video close clears cache and restores the page's original fetch/XHR functions; enabled observers remain dormant outside `/watch` so Home/Search → watch one-shot capture still works.
+
+### Durable state and ownership
+
+- Recover a missing `profile.json` from the existing event ledger instead of silently creating a new profile.
+- Store seed known IDs and a bounded session item catalog in new events, allowing future replay without the original pack; historical records with missing content fail closed rather than disappearing.
+- Move import-job recovery after the process acquires `server.lock`, so a losing second process cannot mark the active worker's job failed.
+- Bind Progressive focus to `session_id + owner_epoch`; storage epochs include owner epoch, so a stale tab cannot steer or lock out the new owner after claim.
+
+### Reproducible alpha delivery
+
+- Fix ZIP creator metadata and file mode so Windows and Linux builds are byte-identical.
+- Write checksum files with explicit LF bytes so `sha256sum -c` works cross-platform.
+- Publish Release assets from the successful GitHub Actions artifact rather than rebuilding them locally.
+- Enable GitHub private vulnerability reporting and mark all public-source alpha releases as Pre-release rather than Latest stable.
+
+### Versioning
+
+- Extension `0.2.7`.
+- Reducer remains `rules-v6`.
+
 ## 0.2.6 — 2026-09-05
 
 ### Fixed from real-use feedback

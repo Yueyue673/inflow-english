@@ -7,10 +7,13 @@
   const MAX_EVENTS = 50_000;
   const MAX_ENTRIES = 6;
   const TTL_MS = 120_000;
+  const MODE_KEY = "inflow:auto-captions-enabled:v1";
   const entries = [];
+  let captureEnabled = true;
+  try { captureEnabled = localStorage.getItem(MODE_KEY) !== "0"; } catch {}
 
   function captionIdentity(rawUrl) {
-    if (location.pathname !== "/watch") return null;
+    if (!captureEnabled || location.pathname !== "/watch") return null;
     try {
       const url = new URL(String(rawUrl || ""), location.href);
       if (url.protocol !== "https:" || !new Set(["youtube.com", "www.youtube.com", "m.youtube.com"]).has(url.hostname) || url.pathname !== "/api/timedtext") return null;
@@ -82,23 +85,24 @@
     } catch {}
   }
 
-  const originalFetch = globalThis.fetch;
-  if (typeof originalFetch === "function") {
-    globalThis.fetch = async function inflowObservedFetch(...args) {
-      const response = await originalFetch.apply(this, args);
-      void captureFetchResponse(response);
-      return response;
-    };
+  let fetchDelegate = globalThis.fetch;
+  let xhrOpenDelegate = XMLHttpRequest.prototype.open;
+  let xhrSendDelegate = XMLHttpRequest.prototype.send;
+  const urlKey = Symbol("inflowTimedTextUrl");
+  let observersInstalled = false;
+
+  async function inflowObservedFetch(...args) {
+    const response = await fetchDelegate.apply(this, args);
+    void captureFetchResponse(response);
+    return response;
   }
 
-  const xhrOpen = XMLHttpRequest.prototype.open;
-  const xhrSend = XMLHttpRequest.prototype.send;
-  const urlKey = Symbol("inflowTimedTextUrl");
-  XMLHttpRequest.prototype.open = function inflowObservedOpen(method, url, ...rest) {
+  function inflowObservedOpen(method, url, ...rest) {
     this[urlKey] = String(url || "");
-    return xhrOpen.call(this, method, url, ...rest);
-  };
-  XMLHttpRequest.prototype.send = function inflowObservedSend(...args) {
+    return xhrOpenDelegate.call(this, method, url, ...rest);
+  }
+
+  function inflowObservedSend(...args) {
     if (captionIdentity(this[urlKey])) {
       this.addEventListener("loadend", () => {
         try {
@@ -120,12 +124,48 @@
         } catch {}
       }, { once: true });
     }
-    return xhrSend.apply(this, args);
-  };
+    return xhrSendDelegate.apply(this, args);
+  }
+
+  function installObservers() {
+    if (observersInstalled) return;
+    if (typeof globalThis.fetch === "function") {
+      fetchDelegate = globalThis.fetch;
+      globalThis.fetch = inflowObservedFetch;
+    }
+    xhrOpenDelegate = XMLHttpRequest.prototype.open;
+    xhrSendDelegate = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = inflowObservedOpen;
+    XMLHttpRequest.prototype.send = inflowObservedSend;
+    observersInstalled = true;
+  }
+
+  function uninstallObservers() {
+    if (!observersInstalled) return;
+    if (globalThis.fetch === inflowObservedFetch) globalThis.fetch = fetchDelegate;
+    if (XMLHttpRequest.prototype.open === inflowObservedOpen) XMLHttpRequest.prototype.open = xhrOpenDelegate;
+    if (XMLHttpRequest.prototype.send === inflowObservedSend) XMLHttpRequest.prototype.send = xhrSendDelegate;
+    observersInstalled = false;
+  }
+
+  function setCaptureEnabled(enabled) {
+    captureEnabled = Boolean(enabled);
+    entries.length = 0;
+    try { localStorage.setItem(MODE_KEY, captureEnabled ? "1" : "0"); } catch {}
+    if (captureEnabled) installObservers();
+    else uninstallObservers();
+  }
+
+  if (captureEnabled) installObservers();
 
   window.addEventListener("message", (event) => {
     const data = event.data;
-    if (location.pathname !== "/watch" || event.source !== window || event.origin !== location.origin || data?.source !== "inflow-caption-cache-request") return;
+    if (event.source !== window || event.origin !== location.origin) return;
+    if (data?.source === "inflow-caption-capture-control") {
+      setCaptureEnabled(data.enabled === true);
+      return;
+    }
+    if (!captureEnabled || location.pathname !== "/watch" || data?.source !== "inflow-caption-cache-request") return;
     const nonce = String(data.nonce || "");
     const videoId = String(data.video_id || "");
     if (!/^[0-9a-f-]{16,64}$/i.test(nonce) || !/^[A-Za-z0-9_-]{11}$/.test(videoId)) return;

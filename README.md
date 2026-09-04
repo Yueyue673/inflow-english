@@ -14,9 +14,9 @@ It does **not** wait for Python, `yt-dlp`, ASR or a model before showing caption
 
 ## Install
 
-The current release is a **public source alpha**, not yet a Chrome Web Store listing.
+The current release is a **public source alpha** and is marked **Pre-release** on GitHub; it is not yet a Chrome Web Store listing.
 
-1. Download `InFlow-English-Chrome-0.2.6.zip` and its checksum from the matching [GitHub Release](https://github.com/Yueyue673/inflow-english/releases).
+1. Download `InFlow-English-Chrome-0.2.7.zip` and its checksum from the matching [GitHub Release](https://github.com/Yueyue673/inflow-english/releases).
 2. Extract it into a stable folder.
 3. Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select that folder.
 4. Open an ordinary English YouTube watch page and refresh already-open tabs once.
@@ -130,7 +130,7 @@ See [Contributing](CONTRIBUTING.md) and [Troubleshooting](docs/TROUBLESHOOTING.m
 
 ## Release status
 
-- Extension: `0.2.6`
+- Extension: `0.2.7`
 - Adaptive policy: `adaptive-v5`
 - Profile schema: `3`
 - Reducer: `rules-v6`

@@ -208,6 +208,12 @@ def main() -> None:
                     raise AssertionError("learning_started_without_explicit_opt_in")
                 learning_enabled_at = time.perf_counter()
                 service_worker.evaluate("chrome.storage.local.set({autoLearning:true})")
+                page.wait_for_timeout(7200)
+                page.locator("video").evaluate("video => { video.dispatchEvent(new Event('seeking')); video.dispatchEvent(new Event('seeked')); }")
+                gate_reset_at = time.perf_counter()
+                page.wait_for_timeout(1200)
+                if list((data_dir / "sessions").glob("*.json")) or list((data_dir / "import-jobs").glob("*.json")):
+                    raise AssertionError("learning_gate_carried_across_seek")
                 try:
                     page.wait_for_function(
                         "() => document.querySelector('#inflow-extension-root')?.shadowRoot?.querySelector('#pill')?.textContent === 'InFlow 正在工作'",
@@ -220,9 +226,10 @@ def main() -> None:
                     }""")
                     jobs = [json.loads(path.read_text(encoding="utf-8")) for path in (data_dir / "import-jobs").glob("*.json")]
                     raise AssertionError({"activation_state": shadow_state, "jobs": jobs, "worker_errors": worker_errors}) from exc
-                gate_to_working_ms = round((time.perf_counter() - learning_enabled_at) * 1000)
-                if gate_to_working_ms < 7750 or gate_to_working_ms > 12_000:
-                    raise AssertionError({"learning_gate_to_working_ms": gate_to_working_ms})
+                gate_total_ms = round((time.perf_counter() - learning_enabled_at) * 1000)
+                gate_to_working_ms = round((time.perf_counter() - gate_reset_at) * 1000)
+                if gate_to_working_ms < 7750 or gate_to_working_ms > 12_000 or gate_total_ms < 14_500:
+                    raise AssertionError({"learning_gate_after_seek_ms": gate_to_working_ms, "learning_gate_total_ms": gate_total_ms})
 
                 session_files = list((data_dir / "sessions").glob("*.json"))
                 if len(session_files) != 1:
@@ -473,7 +480,7 @@ def main() -> None:
             ]
             if page_errors or relevant_console_errors or worker_errors:
                 raise AssertionError({"page_errors": page_errors, "console_errors": relevant_console_errors, "worker_errors": worker_errors})
-            print(json.dumps({"ok": True, "video_id": VIDEO_ID, "pack_id": final_session["pack_id"], "auto_mode_without_per_video_click": True, "automatic_learning_requires_opt_in": True, "learning_gate_to_working_ms": gate_to_working_ms, "display_size_changed_to": "large", "status_dock_geometry": dock_geometry, "video_center_geometry": geometry, "candidate_pool_count": final_session["candidate_pool_count"], "intervention_budgets": final_session["intervention_budgets"], "interaction_summary": final_session["interaction_summary"], "mapping_familiarity_written": False, "subtitle_feedback": lexical["status"], "subtitle_feedback_visible_and_undoable": True, "manual_replays": lexical["replay_count"], "second_video_id": SECOND_VIDEO_ID, "second_pack_id": second_session["pack_id"], "second_session_preserved": second_session["stage"] == "watch", "learning_off_preserved_subtitles": True, "rebuild_matches": True, "formal_live_tree_unchanged": True, "page_errors": page_errors, "extension_console_errors": relevant_console_errors, "external_youtube_console_errors": len(console_errors) - len(relevant_console_errors), "worker_errors": worker_errors, "mapping_screenshot": str(screenshot), "subtitle_screenshot": str(subtitle_screenshot)}, ensure_ascii=False, indent=2))
+            print(json.dumps({"ok": True, "video_id": VIDEO_ID, "pack_id": final_session["pack_id"], "auto_mode_without_per_video_click": True, "automatic_learning_requires_opt_in": True, "learning_gate_to_working_ms": gate_to_working_ms, "learning_gate_total_with_seek_ms": gate_total_ms, "seek_reset_verified": True, "display_size_changed_to": "large", "status_dock_geometry": dock_geometry, "video_center_geometry": geometry, "candidate_pool_count": final_session["candidate_pool_count"], "intervention_budgets": final_session["intervention_budgets"], "interaction_summary": final_session["interaction_summary"], "mapping_familiarity_written": False, "subtitle_feedback": lexical["status"], "subtitle_feedback_visible_and_undoable": True, "manual_replays": lexical["replay_count"], "second_video_id": SECOND_VIDEO_ID, "second_pack_id": second_session["pack_id"], "second_session_preserved": second_session["stage"] == "watch", "learning_off_preserved_subtitles": True, "rebuild_matches": True, "formal_live_tree_unchanged": True, "page_errors": page_errors, "extension_console_errors": relevant_console_errors, "external_youtube_console_errors": len(console_errors) - len(relevant_console_errors), "worker_errors": worker_errors, "mapping_screenshot": str(screenshot), "subtitle_screenshot": str(subtitle_screenshot)}, ensure_ascii=False, indent=2))
         finally:
             stop_tree(server.pid)
 

@@ -1,4 +1,4 @@
-# Verification record — InFlow English 0.2.6
+# Verification record — InFlow English 0.2.7
 
 _Verified: 2026-09-05. This file records observed engineering results, not learning-effect claims._
 
@@ -6,7 +6,7 @@ _Verified: 2026-09-05. This file records observed engineering results, not learn
 
 ```text
 product              inflow-english
-extension            0.2.6
+extension            0.2.7
 policy               adaptive-v5
 profile schema       3
 reducer              rules-v6
@@ -20,7 +20,7 @@ Production active learning for long videos remains disabled.
 ## Local candidate unit suite
 
 ```text
-Ran 176 tests in 23.090s
+Ran 182 tests in 36.331s
 OK
 ```
 
@@ -31,6 +31,9 @@ The suite now covers, among the existing pack, server, security and event tests:
 - stale bootstrap/prepare activation unable to create work or overwrite a closed state;
 - old-video page bridges unable to switch/restore tracks or publish success after SPA navigation;
 - hidden players unable to mature the learning gate, pause or silently resume;
+- seek, brief pause and visibility events resetting the pre-learning gate synchronously;
+- unequal bilingual segmentation requiring time overlap rather than matching array indices;
+- automatic-caption off restoring page fetch/XHR and persisting a one-bit document-start control;
 - streaming cancellation above 5 MB, 50,000-event and 10,000-segment limits;
 - a named page-bridge worst-case budget below the 4,000 ms content RPC deadline;
 - transient `player.getOption()` failure and four-hour caption metadata;
@@ -43,7 +46,10 @@ The suite now covers, among the existing pack, server, security and event tests:
 - assisted/replayed probes not moving memory windows;
 - adaptive `reason` and `last_changed_at` included in rebuild comparison;
 - old reducers backed up and replayed instead of relabelled, with cross-process migration lock coverage;
+- missing-profile replay, embedded seed/item catalogs and fail-closed historical content gaps;
+- import recovery running only after process ownership, plus Progressive focus bound to session owner epoch;
 - local Argos as the default translation backend and Google available only through explicit opt-in;
+- deterministic ZIP metadata and LF checksum output;
 - separate development and first-Chrome-Web-Store-upload archives.
 
 Four private-media human/audit tests remain conditionally skipped in a public checkout because those media are intentionally not committed. Their public synthetic contracts are covered.
@@ -55,13 +61,13 @@ All browser contracts used isolated temporary profiles and data directories, rea
 ### Standalone captions — no localhost permission
 
 ```text
-host visible                         63 ms
-bilingual caption ready             108 ms
-paused missing-track error         4578 ms
-playing missing-track error        4579 ms
+host visible                         52 ms
+bilingual caption ready              85 ms
+paused missing-track error         4321 ms
+playing missing-track error        4581 ms
 definitive failure auto-retried     false
-first-play recovery                  312 ms
-same-document SPA switch              12 ms
+first-play recovery                  314 ms
+same-document SPA switch              16 ms
 status geometry                       124.94 × 32 px
 status dock                           side; 10 px beyond video edge
 viewport hide → return               passed
@@ -95,11 +101,20 @@ The native response is captured once.
 原生响应只捕获一次。
 ```
 
+The same browser then changed Chrome storage through the extension worker:
+
+```text
+automatic captions off   fetch restored; marker 0
+automatic captions on    inflowObservedFetch installed; marker 1
+```
+
 ### Optional learning and interaction UI
 
 ```text
 automatic learning permission gate         passed
-continuous-play gate to working             8199 ms
+continuous-play gate after seek reset        9062 ms
+total opt-in time including discarded 7.2 s 16276 ms
+seek reset verified                            true
 wide-layout status/video overlap             none
 wide-layout teaching/video overlap           none
 teaching side panel                           300 × 498 px
@@ -171,7 +186,7 @@ After migration and restart:
 
 ```text
 product                  inflow-english
-extension                0.2.6
+extension                0.2.7
 profile reducer          rules-v6
 schema                   3
 WordNet warmup           ready
@@ -188,16 +203,18 @@ concurrent --write       refused: data_directory_in_use
 The exact 12-file allowlist builder produced two verified archives:
 
 ```text
-InFlow-English-Chrome-0.2.6.zip
-SHA-256 fcfca3a1ecc55ee46af6e7d830d846df10964666590e048c9cd9664396467ea0
+InFlow-English-Chrome-0.2.7.zip
+SHA-256 14a2c94bd75a5e0674f8b209478dd0964af6694a00006888d71349fc82ef00bd
 manifest.key present   true
 
-InFlow-English-Chrome-0.2.6-CWS-first-upload.zip
-SHA-256 9b8b511a5100e215c36bb4515e6e43e6b8a95f8b6e9ad287e2a801080ccf179a
+InFlow-English-Chrome-0.2.7-CWS-first-upload.zip
+SHA-256 fa684aac0fc9ffa075b19a6186603c29c236f5d3ab19a3ba0a23349309609c57
 manifest.key present   false
 ```
 
-Both archives contain 12 members and `ZipFile.testzip()` returned no bad member. The second package is the only candidate for a brand-new Chrome Web Store item. Google must assign its Store ID before that origin can be added to `INFLOW_ALLOWED_EXTENSION_ORIGINS`.
+Both archives contain 12 members and `ZipFile.testzip()` returned no bad member. Every member has fixed timestamp, `create_system=3` and regular-file mode `0644`; two independent local builds were byte-identical. Checksum files contain LF only and both passed `sha256sum -c`. The second package is the only candidate for a brand-new Chrome Web Store item. Google must assign its Store ID before that origin can be added to `INFLOW_ALLOWED_EXTENSION_ORIGINS`.
+
+GitHub private vulnerability reporting was enabled and read back as `enabled=true`. Existing source-alpha releases v0.2.3–v0.2.6 were changed from Latest/stable presentation to Pre-release; v0.2.7 must be created with the same status.
 
 ## Product screenshots
 
@@ -212,11 +229,15 @@ The Store assets are direct 1280×800 full-viewport captures with square corners
 
 ## Real Chrome and real YouTube boundary
 
+### 0.2.7 installed-path check
+
+The actual unpacked Chrome extension card was reloaded from the development source and visually read back as `0.2.7`. No 0.2.7 signed-in real-video caption success is claimed from this version check.
+
 ### Existing signed-in Chrome — historical 0.2.5 transport proof
 
-Version 0.2.5 previously produced visible two-line captions on `arj7oStGLkU` and `iG9CE55wbtY`, including a measured 2379 ms post-play caption attempt on the latter. That remains evidence for the signed-in native-response transport introduced in 0.2.5; it is not relabelled as a 0.2.6 run.
+Version 0.2.5 previously produced visible two-line captions on `arj7oStGLkU` and `iG9CE55wbtY`, including a measured 2379 ms post-play caption attempt on the latter. That remains evidence for the signed-in native-response transport introduced in 0.2.5; it is not relabelled as a 0.2.6 or 0.2.7 run.
 
-### 0.2.6 installed-path checks
+### Historical 0.2.6 installed-path checks
 
 - The actual Chrome extension card was reloaded and read back as `0.2.6`.
 - An isolated current 0.2.6 Chromium page loaded the real YouTube player and extension host.
@@ -226,10 +247,10 @@ Version 0.2.5 previously produced visible two-line captions on `arj7oStGLkU` and
 
 ## Public staged-checkout gate
 
-The final staged index was exported to a clean directory containing 108 tracked public files and no working-tree-only files. From that export:
+The final staged index was exported to a clean directory containing 109 tracked public files and no working-tree-only files. From that export:
 
 ```text
-Ran 176 tests in 23.203s
+Ran 182 tests in 36.519s
 OK (skipped=4)
 standalone caption browser     passed
 closed-shadow security         passed
@@ -244,7 +265,7 @@ GitHub Actions is verified live after push and is intentionally not frozen into 
 
 ## Explicitly not passed
 
-- 0.2.6 signed-in real-caption replay after the final installed reload;
+- 0.2.7 signed-in real-caption replay after the final installed reload;
 - a user-authorized real 8-second learning interaction from the installed surface;
 - representative real no-caption, network-loss, low-resource and endurance matrices;
 - real long-video 60 s / 5220 s learning transport after a lawful source path;

@@ -18,6 +18,8 @@ The extension may contact this service only after the user enables experimental 
 ## Network boundary
 
 - Bind only to `127.0.0.1`.
+- Acquire the data-directory `server.lock` before transaction/import recovery; a losing process performs zero writes.
+- If `profile.json` is missing while events exist, rebuild from the ledger; missing historical item data fails closed.
 - Accept only the configured loopback Host.
 - Allow browser Origin only from the local UI, fixed development extension ID, or Store origins explicitly configured in `INFLOW_ALLOWED_EXTENSION_ORIGINS`.
 - Reject other cross-site browser requests.

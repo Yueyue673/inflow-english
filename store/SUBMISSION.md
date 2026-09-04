@@ -21,7 +21,7 @@ This is the remaining one-time account-owner path. Code/build tasks are automate
 1. Register or open the Chrome Web Store developer dashboard.
 2. Accept the developer agreement and pay Google's one-time registration fee if the account has not done so.
 3. Verify the contact email.
-4. Create a new item and upload `InFlow-English-Chrome-0.2.6-CWS-first-upload.zip` from the GitHub Release. Do not upload the development ZIP: its fixed development `key` is intentionally absent from the first-store-upload package, following Chrome's [manifest key workflow](https://developer.chrome.com/docs/extensions/reference/manifest/key).
+4. Create a new item and upload `InFlow-English-Chrome-0.2.7-CWS-first-upload.zip` from the GitHub Release. Do not upload the development ZIP: its fixed development `key` is intentionally absent from the first-store-upload package, following Chrome's [manifest key workflow](https://developer.chrome.com/docs/extensions/reference/manifest/key).
 5. Record the Store item ID assigned after upload. If the optional local service will be tested, add `chrome-extension://<STORE_ID>` to `INFLOW_ALLOWED_EXTENSION_ORIGINS`; never replace it with a guessed ID.
 6. Copy the name, short description, detailed description, category and language from `LISTING.md`.
 7. Upload the icon and the two screenshots from `store/assets/`.
@@ -38,7 +38,7 @@ Do not submit if the dashboard reports:
 - remotely hosted code;
 - a screenshot size, padding/full-bleed or square-corner error;
 - a privacy answer inconsistent with the manifest;
-- a ZIP version other than `0.2.6`;
+- a ZIP version other than `0.2.7`;
 - a package hash different from the checksum attached to the release.
 
 Do not claim that Store approval, one-click install or automatic updates exist until Google returns an approved public listing URL.

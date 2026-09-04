@@ -19,6 +19,7 @@ The extension:
 - rejects redirects and accepts timed text only from `youtube.com`, `www.youtube.com` or `m.youtube.com`;
 - keeps parsed caption payloads in the current tab's memory;
 - stores `auto captions`, `experimental automatic learning`, caption size and per-document owner identifiers in Chrome extension storage;
+- mirrors only the automatic-caption on/off boolean to YouTube localStorage under `inflow:auto-captions-enabled:v1`, allowing the MAIN-world document-start hook to stay disabled before an early one-shot response; no URL, caption or learning state is stored there;
 - does not request the cookies, browsing history, downloads, clipboard, webRequest or `<all_urls>` permissions;
 - does not send telemetry, crash reports, captions or vocabulary state to an InFlow cloud service.
 
@@ -54,4 +55,4 @@ The local service binds only to loopback. It rejects unknown Host headers, unkno
 
 ## Security reports
 
-Please report a vulnerability privately through GitHub Security Advisories once the public repository is available. Do not include private videos, cookies, credentials or learning records in a public issue.
+Please use the repository's enabled [private vulnerability reporting](https://github.com/Yueyue673/inflow-english/security/advisories/new). Do not include private videos, cookies, credentials or learning records in a public issue.

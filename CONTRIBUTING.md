@@ -42,6 +42,8 @@ python tools/build_extension.py --store-first-upload
 
 Behavior tests use a temporary extension copy with an open shadow root. Production `extension/content-script.js` must remain `mode: "closed"`; `tests/closed_shadow_security_browser.py` verifies that boundary.
 
+Release assets must be downloaded from the successful CI run for the exact release commit. Do not rebuild ZIPs after CI; compare the downloaded artifact hashes with `TEST-RESULTS.md`, then upload those same bytes. All source-alpha releases remain GitHub Pre-releases until a stable consumer installation exists.
+
 ## Pull requests
 
 - Explain the user-visible problem before the implementation.

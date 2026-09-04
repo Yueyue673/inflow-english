@@ -9,7 +9,7 @@ The current public security target is the standalone Chrome extension in `extens
 - Manifest V3; no remotely hosted code.
 - One extension permission: `storage`.
 - Host access is limited to YouTube and the optional loopback service.
-- A packaged MAIN-world hook installs once for the YouTube document lifecycle so same-document navigation from Home/Search to `/watch` works. It observes only exact YouTube `/api/timedtext` responses while the current route is `/watch`, leaves the player's original fetch/XHR result unchanged, streams/cancels its clone above 5 MB, and holds at most six validated responses with at most 50,000 events each for two minutes in tab memory.
+- A packaged MAIN-world hook installs once for the YouTube document lifecycle so same-document navigation from Home/Search to `/watch` works. It observes only exact YouTube `/api/timedtext` responses while the current route is `/watch`, leaves the player's original fetch/XHR result unchanged, streams/cancels its clone above 5 MB, and holds at most six validated responses with at most 50,000 events each for two minutes in tab memory. Turning automatic captions off clears the cache and restores the page's prior fetch/XHR functions; a one-bit YouTube-localStorage marker keeps it disabled at the next document start.
 - The page bridge accepts one current video ID, only three exact YouTube hosts, only `/api/timedtext`, an 8 KiB URL limit, 100 caption tracks, a hard per-track timeout and a streaming 5 MB response limit.
 - Fallback caption requests use only YouTube same-origin credentials and reject redirects; extension code never reads cookie values.
 - The production UI uses a closed shadow root. Private caption and knowledge state is not exposed through `host.shadowRoot`.
@@ -46,4 +46,4 @@ The current public security target is the standalone Chrome extension in `extens
 
 ## Reporting
 
-Use GitHub Security Advisories for vulnerability reports. Include the version, a minimal reproduction and the affected boundary. Replace credentials, cookies, private URLs and local paths with `[REDACTED]`.
+Use the repository's enabled [private vulnerability reporting](https://github.com/Yueyue673/inflow-english/security/advisories/new). Include the version, a minimal reproduction and the affected boundary. Replace credentials, cookies, private URLs and local paths with `[REDACTED]`.

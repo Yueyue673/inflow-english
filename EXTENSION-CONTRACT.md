@@ -3,7 +3,7 @@
 ## Identity
 
 - Manifest V3
-- Version `0.2.6`
+- Version `0.2.7`
 - Minimum Chrome `120`
 - Fixed development ID `hfkkhkdpakcmpokgbihceoppleeokifd`
 - Required permission: `storage`
@@ -24,7 +24,7 @@ The extension must remain useful when localhost is absent. Page-caption first pa
 
 ## Security boundary
 
-- `page-hook.js` installs once at document start in YouTube's MAIN world so Home/Search → watch SPA navigation remains covered. It copies responses only while the current route is `/watch`, keeps at most six valid player timed-text responses for two minutes, and never uses Chrome APIs or localhost.
+- `page-hook.js` installs once at document start in YouTube's MAIN world so Home/Search → watch SPA navigation remains covered. It copies responses only while the current route is `/watch`, keeps at most six valid player timed-text responses for two minutes, and never uses Chrome APIs or localhost. Automatic-caption off clears its cache, restores prior fetch/XHR functions and persists only one on/off marker in YouTube localStorage.
 - `page-bridge.js` receives one nonce and one expected video ID.
 - It accepts only three exact YouTube hosts, `/api/timedtext`, 100 tracks, 8 KiB URLs, a 24-hour duration sanity bound, hard per-track deadlines, 5 MB streamed bytes and 50,000 caption events.
 - It may use YouTube same-origin credentials for a fallback request but never reads cookie values; redirects are rejected.

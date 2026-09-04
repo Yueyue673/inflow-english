@@ -22,7 +22,7 @@ class ExtensionContractTests(unittest.TestCase):
 
     def test_manifest_v3_has_stable_id_and_minimal_permissions(self):
         self.assertEqual(self.manifest["manifest_version"], 3)
-        self.assertEqual(self.manifest["version"], "0.2.6")
+        self.assertEqual(self.manifest["version"], "0.2.7")
         public_key = base64.b64decode(self.manifest["key"], validate=True)
         alphabet = "abcdefghijklmnop"
         extension_id = "".join(alphabet[byte >> 4] + alphabet[byte & 15] for byte in hashlib.sha256(public_key).digest()[:16])
@@ -47,7 +47,8 @@ class ExtensionContractTests(unittest.TestCase):
 
     def test_release_builder_separates_development_and_first_store_upload_keys(self):
         with tempfile.TemporaryDirectory() as temporary:
-            output = Path(temporary)
+            output = Path(temporary) / "first"
+            duplicate_output = Path(temporary) / "second"
             development = subprocess.run(
                 ["python", "tools/build_extension.py", "--output-dir", str(output)],
                 cwd=ROOT,
@@ -64,20 +65,42 @@ class ExtensionContractTests(unittest.TestCase):
                 encoding="utf-8",
                 creationflags=CREATE_NO_WINDOW,
             )
+            duplicate = subprocess.run(
+                ["python", "tools/build_extension.py", "--output-dir", str(duplicate_output)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                creationflags=CREATE_NO_WINDOW,
+            )
             self.assertEqual(development.returncode, 0, development.stderr)
             self.assertEqual(store.returncode, 0, store.stderr)
+            self.assertEqual(duplicate.returncode, 0, duplicate.stderr)
             development_path = Path(json.loads(development.stdout)["archive"])
             store_path = Path(json.loads(store.stdout)["archive"])
+            duplicate_path = Path(json.loads(duplicate.stdout)["archive"])
             with zipfile.ZipFile(development_path) as archive:
                 development_manifest = json.loads(archive.read("manifest.json"))
+                development_infos = archive.infolist()
             with zipfile.ZipFile(store_path) as archive:
                 store_manifest = json.loads(archive.read("manifest.json"))
+                store_infos = archive.infolist()
             self.assertIn("key", development_manifest)
             self.assertNotIn("key", store_manifest)
             expected_store_manifest = dict(development_manifest)
             expected_store_manifest.pop("key")
             self.assertEqual(store_manifest, expected_store_manifest)
             self.assertTrue(store_path.name.endswith("-CWS-first-upload.zip"))
+            self.assertEqual(development_path.read_bytes(), duplicate_path.read_bytes())
+            for info in [*development_infos, *store_infos]:
+                self.assertEqual(info.create_system, 3)
+                self.assertEqual(info.external_attr >> 16, 0o100644)
+                self.assertEqual(info.extra, b"")
+                self.assertEqual(info.comment, b"")
+            for archive_path in (development_path, store_path):
+                checksum = archive_path.with_suffix(archive_path.suffix + ".sha256").read_bytes()
+                self.assertTrue(checksum.endswith(b"\n"))
+                self.assertNotIn(b"\r", checksum)
 
     def test_store_assets_are_full_bleed_and_privacy_draft_discloses_local_data(self):
         pairs = [
@@ -176,6 +199,30 @@ class ExtensionContractTests(unittest.TestCase):
         result = subprocess.run(["node", "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=5, creationflags=CREATE_NO_WINDOW)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {"cancelled": True, "entries": 0})
+
+    def test_main_world_hook_obeys_persisted_and_live_caption_control(self):
+        source = (EXTENSION / "page-hook.js").read_text(encoding="utf-8")
+        harness = """
+        const originalFetch=async()=>({ok:true});
+        function originalOpen(){} function originalSend(){}
+        function XHR(){} XHR.prototype.open=originalOpen;XHR.prototype.send=originalSend;
+        global.fetch=originalFetch;global.XMLHttpRequest=XHR;
+        const listeners=[];global.window={addEventListener:(type,listener)=>{if(type==='message')listeners.push(listener)},postMessage(){}};
+        global.location={origin:'https://www.youtube.com',href:'https://www.youtube.com/watch?v=abcdefghijk',pathname:'/watch'};
+        const storage={value:'0'};global.localStorage={getItem:()=>storage.value,setItem:(_key,value)=>{storage.value=value}};
+        """ + source + """
+        const initial={fetch:global.fetch===originalFetch,open:XHR.prototype.open===originalOpen,send:XHR.prototype.send===originalSend};
+        const control=(enabled)=>listeners[0]({source:global.window,origin:global.location.origin,data:{source:'inflow-caption-capture-control',enabled}});
+        control(true);const enabled={fetch:global.fetch!==originalFetch,open:XHR.prototype.open!==originalOpen,send:XHR.prototype.send!==originalSend,stored:storage.value};
+        control(false);const disabled={fetch:global.fetch===originalFetch,open:XHR.prototype.open===originalOpen,send:XHR.prototype.send===originalSend,stored:storage.value};
+        process.stdout.write(JSON.stringify({initial,enabled,disabled}));
+        """
+        result = subprocess.run(["node", "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=5, creationflags=CREATE_NO_WINDOW)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["initial"], {"fetch": True, "open": True, "send": True})
+        self.assertEqual(payload["enabled"], {"fetch": True, "open": True, "send": True, "stored": "1"})
+        self.assertEqual(payload["disabled"], {"fetch": True, "open": True, "send": True, "stored": "0"})
 
     def test_service_worker_is_bounded_not_an_arbitrary_localhost_proxy(self):
         source = (EXTENSION / "service-worker.js").read_text(encoding="utf-8")
@@ -498,6 +545,27 @@ class ExtensionContractTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {"activateCalls": 0, "continuousPlaybackStartedAt": 0, "autoEnableTimer": None})
 
+    def test_seek_and_short_pause_reset_the_pre_learning_gate(self):
+        source = (EXTENSION / "content-script.js").read_text(encoding="utf-8")
+        start = source.index("function resetContinuousPlaybackGate")
+        end = source.index("\n\n  function stopMonitor", start)
+        functions = source[start:end]
+        script = """
+        let continuousPlaybackStartedAt=5000,autoEnableTimer=1,enabled=false,userGeneration=0,manualSeeks=0,activeInteraction=null,expectedPause=0,expectedPlay=0,subtitleActive=true,session=null;
+        const listeners={}; const video={dataset:{},currentTime:3,addEventListener:(name,fn)=>{listeners[name]=fn}};
+        function cancelAutoEnable(){autoEnableTimer=null} function finalizeInteraction(){} function renderCaption(){} function focusProgressiveAt(){} function scheduleAutomaticSubtitleRetry(){} function currentVideoId(){return 'abcdefghijk'} function startMonitor(){} function manageAutoEnable(){} function finishSession(){}
+        """ + functions + """
+        attachVideo(video);
+        listeners.seeking(); const afterSeek={continuousPlaybackStartedAt,autoEnableTimer,manualSeeks,userGeneration};
+        continuousPlaybackStartedAt=6000;autoEnableTimer=2;listeners.pause();
+        process.stdout.write(JSON.stringify({afterSeek,afterPause:{continuousPlaybackStartedAt,autoEnableTimer,manualSeeks,userGeneration}}));
+        """
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=5, creationflags=CREATE_NO_WINDOW)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual(output["afterSeek"], {"continuousPlaybackStartedAt": 0, "autoEnableTimer": None, "manualSeeks": 0, "userGeneration": 0})
+        self.assertEqual(output["afterPause"], {"continuousPlaybackStartedAt": 0, "autoEnableTimer": None, "manualSeeks": 0, "userGeneration": 0})
+
     def test_stale_open_interaction_is_closed_without_familiarity_evidence(self):
         source = (EXTENSION / "content-script.js").read_text(encoding="utf-8")
         start = source.index("async function recoverStaleOpenInteraction")
@@ -549,6 +617,7 @@ class ExtensionContractTests(unittest.TestCase):
         self.assertEqual(payload["duringAd"], {"token": None, "attempts": 0, "retries": 0})
         self.assertEqual(payload["afterContent"]["attempts"], 1)
         self.assertEqual(payload["afterContent"]["retries"], 1)
+        self.assertIsNone(payload["afterContent"]["token"])
 
     def test_stopping_learning_restarts_a_stale_inflight_subtitle_task(self):
         source = (EXTENSION / "content-script.js").read_text(encoding="utf-8")
@@ -589,13 +658,18 @@ class ExtensionContractTests(unittest.TestCase):
           [{start:10,end:12,text:'English current'}],
           [{start:8,end:10.8,text:'上一句'},{start:10.1,end:12.1,text:'当前句'}]
         );
-        process.stdout.write(JSON.stringify({aligned,fallback}));
+        const unequal = mergePageCaptionTracks(
+          [{start:0,end:3,text:'English first'},{start:3,end:6,text:'English current'}],
+          [{start:0,end:1.5,text:'第一句前段'},{start:2,end:2.9,text:'上一句尾巴'},{start:3,end:6,text:'当前中文'}]
+        );
+        process.stdout.write(JSON.stringify({aligned,fallback,unequal}));
         """
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", creationflags=CREATE_NO_WINDOW)
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
         self.assertEqual([row["text_zh"] for row in payload["aligned"]], ["中文一", "中文二"])
         self.assertEqual(payload["fallback"][0]["text_zh"], "当前句")
+        self.assertEqual(payload["unequal"][1]["text_zh"], "当前中文")
         self.assertNotIn("上一句当前句", json.dumps(payload, ensure_ascii=False))
 
     def test_page_caption_track_parser_publishes_timed_rows(self):

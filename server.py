@@ -518,6 +518,35 @@ def migrate_profile_reducer(profile: dict[str, Any]) -> dict[str, Any]:
     return rebuilt
 
 
+def recover_missing_profile_from_events() -> dict[str, Any] | None:
+    if not EVENTS_PATH.exists() or EVENTS_PATH.stat().st_size == 0:
+        return None
+    from rebuild_profile import load_combined_content, read_events
+
+    events = read_events(EVENTS_PATH)
+    if not events:
+        return None
+    legacy_feedback = [
+        event for event in events
+        if event.get("type") == "lexicon_feedback" and str((event.get("data") or {}).get("knowledge_key") or "").startswith("v1:")
+    ]
+    if legacy_feedback:
+        raise RuntimeError("profile_recovery_legacy_lexicon_requires_backup")
+    complete_content = load_combined_content(DATA_DIR)
+    rebuilt = rebuild_profile_from_events(complete_content, events, known_ids=load_seed_known_ids())
+    required_item_ids = {
+        str((event.get("data") or {}).get("item_id") or "")
+        for event in events
+        if event.get("type") in {"encounter_recorded", "interaction_completed", "probe_completed"}
+    }
+    required_item_ids.discard("")
+    missing_items = sorted(required_item_ids - set(rebuilt.get("items", {})))
+    if missing_items:
+        raise RuntimeError(f"profile_recovery_missing_content:{','.join(missing_items[:8])}")
+    commit_state(profile=rebuilt)
+    return rebuilt
+
+
 def load_profile() -> dict[str, Any]:
     recover_transactions()
     if PROFILE_PATH.exists():
@@ -533,14 +562,18 @@ def load_profile() -> dict[str, Any]:
         if normalized != profile:
             commit_state(profile=normalized)
         return normalized
+    recovered = recover_missing_profile_from_events()
+    if recovered is not None:
+        return recovered
     event_time = utc_now()
-    profile = new_profile(CONTENT, load_seed_known_ids(), now=event_time)
+    seed_known_ids = load_seed_known_ids()
+    profile = new_profile(CONTENT, seed_known_ids, now=event_time)
     commit_state(
         profile=profile,
         events=[
             build_event(
                 "profile_created",
-                {"seed": "legacy_pretest_read_only", "known_count": len(load_seed_known_ids())},
+                {"seed": "legacy_pretest_read_only", "known_count": len(seed_known_ids), "known_ids": seed_known_ids},
                 at=event_time,
             )
         ],
@@ -1255,9 +1288,6 @@ def recover_import_jobs() -> None:
         atomic_write_json(path, job)
 
 
-recover_import_jobs()
-
-
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     with WRITE_LOCK:
@@ -1583,41 +1613,49 @@ def cancel_import(job_id: str) -> dict[str, Any]:
 @app.post("/api/progressive/{pack_id}/focus")
 async def focus_progressive_pack(pack_id: str, request: Request) -> dict[str, Any]:
     payload = await read_payload(request)
-    client_id_from(payload)
     try:
         playhead_sec = float(payload.get("playhead_sec"))
         focus_epoch = int(payload.get("focus_epoch"))
     except (TypeError, ValueError) as exc:
         raise HTTPException(422, "invalid_progressive_focus") from exc
-    if not math.isfinite(playhead_sec) or playhead_sec < 0 or playhead_sec > 3 * 60 * 60 or focus_epoch < 1:
+    if not math.isfinite(playhead_sec) or playhead_sec < 0 or playhead_sec > 3 * 60 * 60 or focus_epoch < 1 or focus_epoch >= 1_000_000:
         raise HTTPException(422, "invalid_progressive_focus")
-    try:
-        manifest = ProgressiveVideoPackBuilder(PACKS_DIR).set_focus(pack_id, playhead_sec=playhead_sec, focus_epoch=focus_epoch)
-    except VideoPackError as exc:
-        raise HTTPException(404, str(exc).split(":", 1)[0]) from exc
-    resume_job_id = None
-    with IMPORT_LOCK:
-        for path in IMPORT_JOBS_DIR.glob("*.json"):
-            try:
-                job = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeError, json.JSONDecodeError):
-                continue
-            if isinstance(job, dict) and job.get("pack_id") == pack_id:
-                job["playhead_sec"] = playhead_sec
-                job["cancel_requested"] = False
-                job["updated_at"] = isoformat(utc_now())
-                save_import_job(job)
-                if not job.get("build_complete"):
-                    resume_job_id = str(job.get("job_id") or "")
-                break
-    if resume_job_id and not start_import_thread(resume_job_id):
-        raise HTTPException(429, "heavy_queue_full", headers={"Retry-After": "5"})
-    return {
-        "pack_id": pack_id,
-        "playhead_sec": manifest["focus"]["playhead_sec"],
-        "focus_epoch": manifest["focus"]["focus_epoch"],
-        "revision": manifest["revision"],
-    }
+    session_id = str(payload.get("session_id") or "")
+    with WRITE_LOCK:
+        session = load_session(session_id)
+        require_session_owner(session, payload)
+        if session.get("stage") != "watch" or not session.get("progressive") or str(session.get("pack_id") or "") != pack_id:
+            raise HTTPException(409, "progressive_session_mismatch")
+        owner_epoch = int(session.get("owner_epoch", 0))
+        storage_focus_epoch = owner_epoch * 1_000_000 + focus_epoch
+        try:
+            manifest = ProgressiveVideoPackBuilder(PACKS_DIR).set_focus(pack_id, playhead_sec=playhead_sec, focus_epoch=storage_focus_epoch)
+        except VideoPackError as exc:
+            raise HTTPException(404, str(exc).split(":", 1)[0]) from exc
+        resume_job_id = None
+        with IMPORT_LOCK:
+            for path in IMPORT_JOBS_DIR.glob("*.json"):
+                try:
+                    job = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, UnicodeError, json.JSONDecodeError):
+                    continue
+                if isinstance(job, dict) and job.get("pack_id") == pack_id:
+                    job["playhead_sec"] = playhead_sec
+                    job["cancel_requested"] = False
+                    job["updated_at"] = isoformat(utc_now())
+                    save_import_job(job)
+                    if not job.get("build_complete"):
+                        resume_job_id = str(job.get("job_id") or "")
+                    break
+        if resume_job_id and not start_import_thread(resume_job_id):
+            raise HTTPException(429, "heavy_queue_full", headers={"Retry-After": "5"})
+        return {
+            "pack_id": pack_id,
+            "playhead_sec": manifest["focus"]["playhead_sec"],
+            "focus_epoch": focus_epoch,
+            "storage_focus_epoch": manifest["focus"]["focus_epoch"],
+            "revision": manifest["revision"],
+        }
 
 
 @app.get("/api/progressive/{pack_id}/delta")
@@ -1951,6 +1989,7 @@ async def create_session(request: Request) -> dict[str, Any]:
                         "preference_epoch": int(profile.get("adaptive", {}).get("preference_epoch", 1)),
                         "candidate_count": len(session["items"]),
                         "candidate_pool_count": int(session.get("candidate_pool_count", len(content.get("items", [])))),
+                        "item_catalog": deepcopy(content.get("items", [])),
                         "effective_speech_sec": session.get("effective_speech_sec"),
                         "intervention_budgets": deepcopy(session.get("intervention_budgets", {})),
                         "probe_scheduled": bool(session.get("probe")),
@@ -2593,4 +2632,5 @@ app.mount("/ui", StaticFiles(directory=UI_DIR), name="ui")
 
 if __name__ == "__main__":
     acquire_server_lock()
+    recover_import_jobs()
     uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")

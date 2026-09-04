@@ -227,6 +227,19 @@ class AdaptiveCoreTests(unittest.TestCase):
         self.assertEqual(migrated["lexicon"][new_key]["status"], "familiar")
         self.assertEqual(migrated["items"][item["id"]]["knowledge_key"], new_key)
 
+    def test_event_catalog_rebuilds_an_item_without_current_pack_content(self):
+        item = deepcopy(CONTENT["items"][0])
+        now = utc_now()
+        events = [
+            {"schema_version": 1, "event_id": "1" * 32, "type": "profile_created", "at": (now - timedelta(minutes=2)).isoformat(), "session_id": None, "policy_version": "adaptive-v5", "data": {"known_ids": []}},
+            {"schema_version": 1, "event_id": "2" * 32, "type": "session_created", "at": (now - timedelta(minutes=1)).isoformat(), "session_id": "a" * 32, "policy_version": "adaptive-v5", "data": {"pack_id": "removed-pack", "preference_epoch": 1, "item_catalog": [item]}},
+            {"schema_version": 1, "event_id": "3" * 32, "type": "interaction_completed", "at": now.isoformat(), "session_id": "a" * 32, "policy_version": "adaptive-v5", "data": {"item_id": item["id"], "outcome": "completed", "dwell_ms": 6000, "phrase_confirmed": True, "replays": 0, "familiarity_feedback": None}},
+        ]
+        rebuilt = rebuild_profile_from_events({"items": []}, events)
+        self.assertIn(item["id"], rebuilt["items"])
+        self.assertEqual(rebuilt["items"][item["id"]]["teach_count"], 1)
+        self.assertIn(knowledge_key_for_item(item), rebuilt["lexicon"])
+
     def test_ensure_profile_never_stamps_an_old_reducer_without_replay(self):
         profile = new_profile(CONTENT)
         profile["reducer_version"] = "rules-v5"

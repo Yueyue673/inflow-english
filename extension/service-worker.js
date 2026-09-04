@@ -202,7 +202,7 @@ async function handle(message, sender) {
     case "progressiveFocus": {
       const epoch = Number(message.focus_epoch);
       assert(Number.isInteger(epoch) && epoch >= 1, "invalid_focus_epoch");
-      return api(`/api/progressive/${packId(message.pack_id)}/focus`, { method: "POST", body: await ownerBody(sender, { playhead_sec: playhead(message.playhead_sec), focus_epoch: epoch }) });
+      return api(`/api/progressive/${packId(message.pack_id)}/focus`, { method: "POST", body: await ownerBody(sender, { session_id: sessionId(message.session_id), owner_epoch: Number(message.owner_epoch) || 0, playhead_sec: playhead(message.playhead_sec), focus_epoch: epoch }) });
     }
     case "progressiveDelta": {
       const revision = Number(message.since_revision ?? -1);

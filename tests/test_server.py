@@ -448,6 +448,11 @@ class AdaptiveServerTests(unittest.TestCase):
         self.assertEqual(delta.status_code, 200, delta.text)
         self.assertTrue(delta.json()["changed"])
         self.assertTrue(delta.json()["candidates"])
+        created = self.client.post("/api/sessions", json={"qa": True, "client_id": TEST_CLIENT_ID, "pack_id": manifest["pack_id"], "playhead_sec": 1000})
+        self.assertEqual(created.status_code, 200, created.text)
+        started = self.client.post(f"/api/sessions/{created.json()['session_id']}/start", json={"client_id": TEST_CLIENT_ID})
+        self.assertEqual(started.status_code, 200, started.text)
+        owner = {"client_id": TEST_CLIENT_ID, "owner_epoch": started.json()["owner_epoch"], "session_id": created.json()["session_id"]}
         job_id = "d" * 32
         self.server.save_import_job({
             "job_id": job_id,
@@ -458,12 +463,33 @@ class AdaptiveServerTests(unittest.TestCase):
         with mock.patch.object(self.server, "start_import_thread") as start_worker:
             focus = self.client.post(
                 f"/api/progressive/{manifest['pack_id']}/focus",
-                json={"client_id": TEST_CLIENT_ID, "playhead_sec": 1400, "focus_epoch": 2},
+                json={**owner, "playhead_sec": 1400, "focus_epoch": 2},
             )
         self.assertEqual(focus.status_code, 200, focus.text)
         self.assertEqual(focus.json()["playhead_sec"], 1400)
+        self.assertEqual(focus.json()["focus_epoch"], 2)
+        self.assertEqual(focus.json()["storage_focus_epoch"], owner["owner_epoch"] * 1_000_000 + 2)
         start_worker.assert_called_once_with(job_id)
         self.assertFalse(self.server.load_import_job(job_id)["cancel_requested"])
+
+        new_client = "2" * 32
+        claimed = self.client.post(f"/api/sessions/{created.json()['session_id']}/claim", json={"client_id": new_client})
+        self.assertEqual(claimed.status_code, 200, claimed.text)
+        stale = self.client.post(
+            f"/api/progressive/{manifest['pack_id']}/focus",
+            json={**owner, "playhead_sec": 200, "focus_epoch": 999},
+        )
+        self.assertEqual(stale.status_code, 409)
+        current_job = self.server.load_import_job(job_id)
+        current_job["build_complete"] = True
+        self.server.save_import_job(current_job)
+        fresh = self.client.post(
+            f"/api/progressive/{manifest['pack_id']}/focus",
+            json={"client_id": new_client, "owner_epoch": claimed.json()["owner_epoch"], "session_id": created.json()["session_id"], "playhead_sec": 300, "focus_epoch": 1},
+        )
+        self.assertEqual(fresh.status_code, 200, fresh.text)
+        self.assertEqual(fresh.json()["playhead_sec"], 300)
+        self.assertGreater(fresh.json()["storage_focus_epoch"], focus.json()["storage_focus_epoch"])
         candidate = delta.json()["candidates"][0]
         audio = self.client.get(f"/api/progressive/{manifest['pack_id']}/files/{candidate['phrase_audio']}")
         self.assertEqual(audio.status_code, 200, audio.text)
@@ -708,6 +734,41 @@ class AdaptiveServerTests(unittest.TestCase):
         self.assertEqual(completed_events[0]["data"]["outcome"], "technical_failure")
         self.assertIsNone(completed_events[0]["data"]["familiarity_feedback"])
 
+    def test_missing_profile_replays_existing_ledger_without_appending_reset(self):
+        created = self.client.post("/api/sessions", json={"qa": True, "client_id": TEST_CLIENT_ID}).json()
+        started = self.client.post(f"/api/sessions/{created['session_id']}/start", json={"client_id": TEST_CLIENT_ID}).json()
+        item = next(row for row in started["items"] if row["min_intensity"] in {"low", "medium"})
+        owner = {"client_id": TEST_CLIENT_ID, "owner_epoch": started["owner_epoch"]}
+        opened = self.client.post(f"/api/sessions/{created['session_id']}/interactions/start", json={**owner, "item_id": item["id"]}).json()
+        completed = self.client.post(
+            f"/api/sessions/{created['session_id']}/interactions/{item['id']}/complete",
+            json={**owner, "interaction_id": opened["interaction"]["interaction_id"], "outcome": "completed", "dwell_ms": 6000, "phrase_confirmed": True, "replays": 0},
+        )
+        self.assertEqual(completed.status_code, 200, completed.text)
+        data_root = Path(self.temp.name)
+        before = json.loads((data_root / "profile.json").read_text(encoding="utf-8"))
+        event_bytes = (data_root / "events.jsonl").read_bytes()
+        (data_root / "profile.json").unlink()
+
+        recovered = self.server.load_profile()
+        self.assertEqual(recovered["items"][item["id"]]["teach_count"], before["items"][item["id"]]["teach_count"])
+        self.assertEqual(recovered["items"][item["id"]]["aural_stage"], before["items"][item["id"]]["aural_stage"])
+        self.assertEqual((data_root / "events.jsonl").read_bytes(), event_bytes)
+        event_types = [json.loads(line)["type"] for line in event_bytes.decode("utf-8").splitlines()]
+        self.assertEqual(event_types.count("profile_created"), 1)
+
+    def test_missing_profile_fails_closed_when_historical_item_content_is_missing(self):
+        data_root = Path(self.temp.name)
+        now = self.server.utc_now()
+        events = [
+            self.server.build_event("profile_created", {"known_ids": []}, at=now - timedelta(minutes=1)),
+            self.server.build_event("interaction_completed", {"item_id": "removed-item", "outcome": "completed", "dwell_ms": 6000, "phrase_confirmed": True, "replays": 0}, session_id="a" * 32, at=now),
+        ]
+        (data_root / "events.jsonl").write_text("\n".join(json.dumps(event, ensure_ascii=False) for event in events) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "profile_recovery_missing_content:removed-item"):
+            self.server.load_profile()
+        self.assertFalse((data_root / "profile.json").exists())
+
     def test_server_replays_and_backs_up_an_old_reducer_before_serving(self):
         data_root = Path(self.temp.name)
         now = self.server.utc_now()
@@ -774,7 +835,7 @@ class AdaptiveServerTests(unittest.TestCase):
         self.assertEqual(health.status_code, 200)
         self.assertEqual(health.json()["items"], 16)
         self.assertEqual(health.json()["builder_version"], "video-pack-builder/1.9.2")
-        self.assertEqual(health.json()["extension_version"], "0.2.6")
+        self.assertEqual(health.json()["extension_version"], "0.2.7")
         self.assertTrue(health.json()["progressive_learning_enabled"])
 
         profile = self.client.get("/api/profile").json()

@@ -1,6 +1,6 @@
 # Chrome extension
 
-This directory is the standalone Manifest V3 extension for InFlow English `0.2.6`.
+This directory is the standalone Manifest V3 extension for InFlow English `0.2.7`.
 
 ## Runtime path
 

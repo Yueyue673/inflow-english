@@ -122,15 +122,26 @@ def main() -> None:
                 context.close()
                 raise AssertionError({"native_capture_not_ready": debug, "requests": requests}) from exc
             state = page.evaluate("""() => { const root=document.querySelector('#inflow-extension-root').shadowRoot; return {hook:globalThis.__inflowCaptionCaptureV1===true,path:location.pathname,pill:root.querySelector('#pill').textContent,english:root.querySelector('#captionEnglish').textContent,chinese:root.querySelector('#captionChinese').textContent}; }""")
+            worker = context.service_workers[0] if context.service_workers else context.wait_for_event("serviceworker", timeout=5_000)
+            worker.evaluate("chrome.storage.local.set({autoMode:false})")
+            page.wait_for_function("() => window.fetch.name !== 'inflowObservedFetch'", timeout=3_000)
+            capture_disabled = page.evaluate("() => ({fetch:window.fetch.name,stored:localStorage.getItem('inflow:auto-captions-enabled:v1')})")
+            worker.evaluate("chrome.storage.local.set({autoMode:true})")
+            page.wait_for_function("() => window.fetch.name === 'inflowObservedFetch'", timeout=3_000)
+            capture_reenabled = page.evaluate("() => ({fetch:window.fetch.name,stored:localStorage.getItem('inflow:auto-captions-enabled:v1')})")
             context.close()
 
     if state.get("hook") is not True or state.get("path") != "/watch":
         raise AssertionError({"spa_hook_not_active": state})
+    if capture_disabled.get("stored") != "0" or capture_disabled.get("fetch") == "inflowObservedFetch":
+        raise AssertionError({"capture_not_disabled": capture_disabled})
+    if capture_reenabled != {"fetch": "inflowObservedFetch", "stored": "1"}:
+        raise AssertionError({"capture_not_reenabled": capture_reenabled})
     if not any(row["lang"] == "en" and not row["tlang"] and row["served"] for row in requests):
         raise AssertionError({"english_native_response_missing": requests})
     if not any(str(row["tlang"]).lower().startswith("zh") and row["served"] for row in requests):
         raise AssertionError({"chinese_native_response_missing": requests})
-    print(json.dumps({"ok": True, "state": state, "requests": requests}, ensure_ascii=False, indent=2))
+    print(json.dumps({"ok": True, "state": state, "capture_disabled": capture_disabled, "capture_reenabled": capture_reenabled, "requests": requests}, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

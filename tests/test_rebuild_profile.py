@@ -79,6 +79,50 @@ class RebuildProfileLockTests(unittest.TestCase):
             self.assertEqual(len(backups), 1)
             self.assertEqual(json.loads(backups[0].read_text(encoding="utf-8"))["items"][item_id]["next_window_start"], "2099-01-01T00:00:00Z")
 
+    def test_losing_server_process_cannot_recover_active_import_jobs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data_root = Path(temporary)
+            job_path = data_root / "import-jobs" / ("a" * 32 + ".json")
+            job_path.parent.mkdir(parents=True)
+            job = {"job_id": "a" * 32, "status": "running", "stage": "transcribing", "fraction": 0.5}
+            job_path.write_text(json.dumps(job), encoding="utf-8")
+            original = job_path.read_bytes()
+            holder = subprocess.Popen(
+                [sys.executable, "-c", LOCK_HOLDER, str(data_root / "server.lock")],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                creationflags=CREATE_NO_WINDOW,
+            )
+            try:
+                self.assertEqual(holder.stdout.readline().strip(), "ready")
+                environment = dict(os.environ)
+                environment.update({"INFLOW_ADAPTIVE_DATA_DIR": str(data_root), "INFLOW_ADAPTIVE_PORT": "8879"})
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "server.py")],
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    timeout=30,
+                    creationflags=CREATE_NO_WINDOW,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("data directory already owned", result.stderr + result.stdout)
+                self.assertEqual(job_path.read_bytes(), original)
+            finally:
+                if holder.stdin:
+                    holder.stdin.write("x")
+                    holder.stdin.flush()
+                    holder.stdin.close()
+                holder.wait(timeout=5)
+                if holder.stdout:
+                    holder.stdout.close()
+                if holder.stderr:
+                    holder.stderr.close()
+
     def test_write_refuses_while_server_data_lock_is_held(self):
         with tempfile.TemporaryDirectory() as temporary:
             lock_path = Path(temporary) / "server.lock"

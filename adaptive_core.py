@@ -1157,9 +1157,26 @@ def rebuild_profile_from_events(
     known_ids: Iterable[str] = (),
 ) -> dict[str, Any]:
     event_rows = list(events)
+    replay_content = deepcopy(content)
+    replay_content["items"] = list(content.get("items", []))
+    known_item_ids = {str(item.get("id") or "") for item in replay_content["items"]}
+    for event in event_rows:
+        if event.get("type") != "session_created":
+            continue
+        for item in (event.get("data") or {}).get("item_catalog", []):
+            if not isinstance(item, dict):
+                raise ValueError("invalid_event_item_catalog")
+            item_id = str(item.get("id") or "")
+            if not item_id or not item.get("surface") or not item.get("gloss_zh"):
+                raise ValueError("invalid_event_item_catalog")
+            if item_id not in known_item_ids:
+                replay_content["items"].append(deepcopy(item))
+                known_item_ids.add(item_id)
     profile_created = next((event for event in event_rows if event.get("type") == "profile_created"), None)
     initial_time = parse_time(profile_created.get("at")) if profile_created else None
-    profile = new_profile(content, known_ids, now=initial_time)
+    recorded_known_ids = (profile_created.get("data") or {}).get("known_ids") if profile_created else None
+    initial_known_ids = recorded_known_ids if isinstance(recorded_known_ids, list) else list(known_ids)
+    profile = new_profile(replay_content, initial_known_ids, now=initial_time)
     interactions_by_session: dict[str, dict[str, dict[str, Any]]] = {}
     encounters_by_session: dict[str, set[str]] = {}
     session_epochs: dict[str, int] = {}

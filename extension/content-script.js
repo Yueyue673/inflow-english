@@ -261,6 +261,15 @@
     } catch { return null; }
   }
 
+  function setPageCaptionCaptureEnabled(enabled) {
+    window.postMessage({ source: "inflow-caption-capture-control", enabled: Boolean(enabled) }, location.origin);
+  }
+
+  function syncPageCaptionCaptureControl() {
+    const current = currentVideoId();
+    setPageCaptionCaptureEnabled(autoMode && !(current && manualDisabledVideoId === current));
+  }
+
   function canonicalUrl(id = videoId) {
     return id ? `https://www.youtube.com/watch?v=${id}` : null;
   }
@@ -550,10 +559,8 @@
     return overlap >= 0.35 || overlap / Math.min(sourceDuration, rowDuration) >= 0.35;
   }
 
-  function bestChineseCaption(englishRow, englishIndex, chinese) {
+  function bestChineseCaption(englishRow, chinese) {
     if (!chinese.length) return "";
-    const indexed = chinese[englishIndex];
-    if (indexed && Math.abs(Number(indexed.start) - Number(englishRow.start)) <= 1.25) return String(indexed.text || "");
     const start = Number(englishRow.start);
     const end = Number(englishRow.end);
     const candidates = chinese.filter((candidate) => pageCaptionOverlap(start, end, candidate));
@@ -573,7 +580,7 @@
     return primary.map((row, index) => {
       const start = Number(row.start);
       const end = Number(row.end);
-      const zh = english.length ? bestChineseCaption(row, index, chinese) : String(row.text || "");
+      const zh = english.length ? bestChineseCaption(row, chinese) : String(row.text || "");
       return {
         id: `page-caption-${String(index + 1).padStart(5, "0")}`,
         start,
@@ -1022,6 +1029,8 @@
     callWorker({
       type: "progressiveFocus",
       pack_id: session.pack_id,
+      session_id: session.session_id,
+      owner_epoch: session.owner_epoch,
       playhead_sec: boundedPlayhead,
       focus_epoch: focusEpoch,
     }).then(() => {
@@ -1051,7 +1060,10 @@
 
   async function activate({ quiet = false, forceRetry = false, forceClaim = false } = {}) {
     if (enabled || preparing) return publicState();
-    if (!quiet) manualDisabledVideoId = null;
+    if (!quiet) {
+      manualDisabledVideoId = null;
+      syncPageCaptionCaptureControl();
+    }
     cancelAutoEnable();
     videoId = currentVideoId();
     if (!videoId) {
@@ -1182,6 +1194,7 @@
 
   async function disable(reason = "user_disabled") {
     if (["user_disabled", "popup_disabled"].includes(reason)) manualDisabledVideoId = videoId;
+    if (["user_disabled", "popup_disabled", "auto_mode_off"].includes(reason)) setPageCaptionCaptureEnabled(false);
     cancelAutoEnable();
     releaseNativeCaptionBridge();
     ++routeGeneration;
@@ -1248,6 +1261,7 @@
       || subtitleActive
       || !["failed", "degraded"].includes(subtitleState)
       || (!fromPlayEvent && !retryableSubtitleError(lastSubtitleErrorCode))
+      || automaticSubtitleRetryAttempts >= 1
       || automaticSubtitleRetryVideoId === playingVideoId
       || inAd()
     ) return;
@@ -1258,15 +1272,22 @@
         if (automaticSubtitleRetryVideoId === playingVideoId) automaticSubtitleRetryVideoId = null;
         return;
       }
+      automaticSubtitleRetryVideoId = null;
       automaticSubtitleRetryAttempts += 1;
       retrySubtitles({ automatic: true });
     }, 300);
+  }
+
+  function resetContinuousPlaybackGate() {
+    continuousPlaybackStartedAt = 0;
+    cancelAutoEnable();
   }
 
   function attachVideo(video) {
     if (video.dataset.inflowBound === "1") return;
     video.dataset.inflowBound = "1";
     video.addEventListener("seeking", () => {
+      resetContinuousPlaybackGate();
       if (!enabled) return;
       userGeneration += 1;
       manualSeeks += 1;
@@ -1278,6 +1299,7 @@
       if (session?.progressive) focusProgressiveAt(video.currentTime);
     });
     video.addEventListener("pause", () => {
+      resetContinuousPlaybackGate();
       if (expectedPause > 0) { expectedPause -= 1; return; }
       if (enabled && activeInteraction) {
         userGeneration += 1;
@@ -1292,6 +1314,7 @@
       }
       scheduleAutomaticSubtitleRetry(video, currentVideoId(), { fromPlayEvent: true });
       startMonitor();
+      manageAutoEnable();
     });
     video.addEventListener("ended", finishSession);
   }
@@ -1949,6 +1972,7 @@
     subtitleReadyAt = null;
     videoId = next;
     manualDisabledVideoId = null;
+    syncPageCaptionCaptureControl();
     session = null;
     importJob = null;
     panelOpen = false;
@@ -1976,6 +2000,7 @@
   function retrySubtitles({ automatic = false } = {}) {
     routeGeneration += 1;
     manualDisabledVideoId = null;
+    syncPageCaptionCaptureControl();
     subtitleTaskVideoId = null;
     subtitleTask = null;
     subtitleState = "idle";
@@ -2046,14 +2071,22 @@
   });
   function handleViewportGeometryChange() {
     syncVideoBounds();
-    if (host.dataset.videoVisible === "false" && activeInteraction) {
-      activeInteraction.pauseOwned = false;
-      finalizeInteraction("technical_failure", "player_not_visible");
+    if (host.dataset.videoVisible === "false") {
+      resetContinuousPlaybackGate();
+      if (activeInteraction) {
+        activeInteraction.pauseOwned = false;
+        finalizeInteraction("technical_failure", "player_not_visible");
+      }
     }
   }
 
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden && activeInteraction) finalizeInteraction("technical_failure", "page_hidden");
+    if (document.hidden) {
+      resetContinuousPlaybackGate();
+      if (activeInteraction) finalizeInteraction("technical_failure", "page_hidden");
+      return;
+    }
+    manageAutoEnable();
   });
   document.addEventListener("pointerdown", (event) => {
     if (event.composedPath().includes(host)) return;
@@ -2122,6 +2155,7 @@
       const wasAutoLearning = autoLearning;
       autoMode = next.autoMode !== false;
       autoLearning = next.autoLearning === true;
+      syncPageCaptionCaptureControl();
       displaySize = ["small", "medium", "large"].includes(next.displaySize) ? next.displaySize : "medium";
       if (!wasAutoLearning && autoLearning) continuousPlaybackStartedAt = performance.now();
       applyDisplaySize();
@@ -2143,6 +2177,7 @@
     const wasAutoLearning = autoLearning;
     if (changes.autoMode) autoMode = changes.autoMode.newValue !== false;
     if (changes.autoLearning) autoLearning = changes.autoLearning.newValue === true;
+    syncPageCaptionCaptureControl();
     if (!wasAutoLearning && autoLearning) continuousPlaybackStartedAt = performance.now();
     if (changes.displaySize && ["small", "medium", "large"].includes(changes.displaySize.newValue)) displaySize = changes.displaySize.newValue;
     applyDisplaySize();
@@ -2154,6 +2189,7 @@
   chrome.storage.local.get({ autoMode: true, autoLearning: false, displaySize: "medium" }).then((stored) => {
     autoMode = stored.autoMode !== false;
     autoLearning = stored.autoLearning === true;
+    syncPageCaptionCaptureControl();
     displaySize = ["small", "medium", "large"].includes(stored.displaySize) ? stored.displaySize : "medium";
     applyDisplaySize();
     syncVideoBounds();

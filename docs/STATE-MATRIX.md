@@ -10,8 +10,9 @@
 | Local service offline | Page captions ready; bootstrap timeout/failure | `字幕已就绪；本机学习服务未连接` | Service later responds | Keep watching | Caption and replay continue |
 | No supported tracks | Page-caption budget expired | `InFlow 需要查看` + exact safe error code | Track metadata changes or user retries | `重试字幕` | Settle within five seconds; do not automatically repeat a definitive `tracks_missing` failure |
 | Automatic learning off | `autoLearning !== true` | `字幕已就绪；自动教学暂停未开启` | User opts in | Toggle experimental learning | Never create a learning job |
-| Learning intent gate | Opted in + visible, playing, non-ad content | Caption remains visible | Eight continuous seconds | Pause/seek/hide cancels gate | Reset timer; no long-term preference change |
+| Learning intent gate | Opted in + visible, playing, non-ad content | Caption remains visible | Eight uninterrupted seconds | Any seek, pause, hide or player leaving viewport resets immediately | No polling-gap carry-over; no long-term preference change |
 | Preparing learning | Local import/session work admitted | `InFlow 学习准备中` + factual stage | READY, failed or cancelled | Pause this video / cancel | Never pause source video |
+| Profile missing | `events.jsonl` exists but `profile.json` does not | Service rebuilds before answering | Replay succeeds or content is missing | None | Never append a default reset; missing historical item/legacy lexicon fails closed |
 | Heavy queue full | Shared worker has 1 active + 4 pending | Retryable `heavy_queue_full` | Capacity becomes available | Retry later | HTTP 429 + `Retry-After: 5`; no orphan job |
 | Previous learning failure | Failed job for same canonical URL | `不会自动重试` | Explicit retry | `重试学习` | Return existing failure; no duplicate work |
 | Session owned elsewhere | `owner_conflict=true` for another document ID | `另一个标签页正在运行` | User claims or leaves it | `接管学习` | Do not change owner epoch |
@@ -23,7 +24,7 @@
 | User takes playback | Trusted play/pause/seek/navigation/hide/ad event | Interaction ends | Normal playback | None | Revoke resume lease; record technical reason, not failure |
 | SPA navigation | URL/player video ID changes | New video loading state | New captions or error | None | Increment generation; late old work ignored |
 | Manual video pause | Current video explicitly disabled | `InFlow 已暂停` | New video or user enables | `开启本视频` | `关闭本视频` and `开启本视频` are exact inverses; auto mode cannot revive the closed video |
-| Long video learning disabled | Production feature flag false | Captions still available | Future quality gate | None | Do not start ProgressivePack learning |
+| Long video learning disabled | Production feature flag false | Captions still available | Future quality gate | None | Progressive focus still requires active session owner; do not start learning |
 
 ## State invariants
 

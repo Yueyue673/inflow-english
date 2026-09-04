@@ -58,8 +58,11 @@ def build(output_dir: Path, *, store_first_upload: bool = False) -> tuple[Path, 
             else:
                 data = (EXTENSION / relative).read_bytes()
             info = zipfile.ZipInfo(relative, date_time=(2026, 1, 1, 0, 0, 0))
+            info.create_system = 3
             info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = 0o644 << 16
+            info.external_attr = 0o100644 << 16
+            info.extra = b""
+            info.comment = b""
             target.writestr(info, data)
     with zipfile.ZipFile(archive) as source:
         names = set(source.namelist())
@@ -69,7 +72,7 @@ def build(output_dir: Path, *, store_first_upload: bool = False) -> tuple[Path, 
             raise SystemExit("archive_verification_failed")
     digest = sha256(archive)
     checksum = archive.with_suffix(archive.suffix + ".sha256")
-    checksum.write_text(f"{digest}  {archive.name}\n", encoding="ascii")
+    checksum.write_bytes(f"{digest}  {archive.name}\n".encode("ascii"))
     return archive, digest
 
 
