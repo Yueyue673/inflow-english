@@ -17,7 +17,7 @@ Help users follow spoken English on ordinary YouTube watch pages through readabl
 InFlow English works inside ordinary YouTube watch pages.
 
 - Shows a visible status as the page starts.
-- Reads the caption tracks already available to the current YouTube player.
+- Reads the caption tracks already available to the current YouTube player and copies the player's own successful timed-text responses in bounded tab memory.
 - Displays Chinese as the primary line and English as the supporting line.
 - Replays the current complete caption segment with `S` or the replay button.
 - Hides its captions during ads and switches cleanly on YouTube SPA navigation.

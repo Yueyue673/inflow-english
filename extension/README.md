@@ -1,12 +1,12 @@
 # Chrome extension
 
-This directory is the standalone Manifest V3 extension for InFlow English `0.2.4`.
+This directory is the standalone Manifest V3 extension for InFlow English `0.2.5`.
 
 ## Runtime path
 
 ```text
-YouTube player caption tracks
-→ page-bridge.js (MAIN world, bounded timed-text fetch)
+YouTube native timed-text response (captured at document start)
+→ page-bridge.js (MAIN world, bounded cache read/fallback)
 → content-script.js (isolated world)
 → closed Shadow DOM captions and replay
 ```

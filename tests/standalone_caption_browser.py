@@ -100,6 +100,7 @@ def main() -> None:
                 route.fulfill(status=200, content_type="application/json", body=json.dumps(payload, ensure_ascii=False))
 
             context.route("https://www.youtube.com/api/timedtext**", captions)
+            service_worker = context.service_workers[0] if context.service_workers else context.wait_for_event("serviceworker", timeout=15_000)
             page = context.pages[0] if context.pages else context.new_page()
             started = time.perf_counter()
             page.goto(URL, wait_until="domcontentloaded", timeout=30_000)
@@ -200,13 +201,26 @@ def main() -> None:
               }}];
             }}""")
             retry_started = time.perf_counter()
-            retry_button.click()
-            page.wait_for_function(
-                "() => document.querySelector('#inflow-extension-root')?.shadowRoot?.querySelector('#pill')?.textContent === 'InFlow 字幕已就绪'",
-                timeout=7_000,
-            )
+            if page.locator("video").get_attribute("data-inflow-bound") != "1":
+                raise AssertionError("failed_video_play_listener_not_bound")
+            page.evaluate("""() => {
+              const video=document.querySelector('video');
+              Object.defineProperty(video,'paused',{value:false,configurable:true});
+              video.dispatchEvent(new Event('play'));
+            }""")
+            try:
+                page.wait_for_function(
+                    "() => document.querySelector('#inflow-extension-root')?.shadowRoot?.querySelector('#pill')?.textContent === 'InFlow 字幕已就绪'",
+                    timeout=7_000,
+                )
+            except Exception as exc:
+                auto_state = page.evaluate("""() => { const root=document.querySelector('#inflow-extension-root')?.shadowRoot; const video=document.querySelector('video'); return {bound:video?.dataset.inflowBound,paused:video?.paused,pill:root?.querySelector('#pill')?.textContent,message:root?.querySelector('#panelMessage')?.textContent}; }""")
+                runtime_state = service_worker.evaluate("""async () => { const [tab]=await chrome.tabs.query({active:true,currentWindow:true}); return chrome.tabs.sendMessage(tab.id,{type:'inflow:getState'}); }""")
+                raise AssertionError({"automatic_play_retry_failed": auto_state, "runtime_state": runtime_state}) from exc
+            page.evaluate("""() => Object.defineProperty(document.querySelector('video'),'paused',{value:true,configurable:true})""")
             retry_ms = round((time.perf_counter() - retry_started) * 1000)
             recovered_panel = second_host.locator("#panelMessage").inner_text()
+            runtime_metrics = service_worker.evaluate("""async () => { const [tab]=await chrome.tabs.query({active:true,currentWindow:true}); const state=await chrome.tabs.sendMessage(tab.id,{type:'inflow:getState'}); return state.performanceMetrics; }""")
             context.close()
 
     if host_ms > 1000:
@@ -223,12 +237,15 @@ def main() -> None:
         raise AssertionError({"failure_ms": failure_ms, "failure_panel": failure_panel})
     if retry_ms > 5500 or "本机学习服务未连接" not in recovered_panel:
         raise AssertionError({"retry_ms": retry_ms, "recovered_panel": recovered_panel})
+    if runtime_metrics.get("status_visible_ms") is None or runtime_metrics.get("status_visible_ms") > 1000 or runtime_metrics.get("caption_attempt_ms") is None or runtime_metrics.get("caption_attempt_ms") > 5500:
+        raise AssertionError({"invalid_runtime_metrics": runtime_metrics})
     print(json.dumps({
         "ok": True,
         "host_visible_ms": host_ms,
         "caption_ready_ms": ready_ms,
         "failure_visible_ms": failure_ms,
-        "retry_ready_ms": retry_ms,
+        "automatic_play_retry_ready_ms": retry_ms,
+        "runtime_metrics": runtime_metrics,
         "ad_transition_ok": ad_transition_ok,
         "ad_replay_blocked": True,
         "spa_caption_ready_ms": spa_ready_ms,

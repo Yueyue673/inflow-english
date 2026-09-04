@@ -33,6 +33,7 @@ jobs:
         run: |
           python -m py_compile adaptive_core.py caption_preview.py launcher.py lexical_sense.py long_video.py progressive_video_pack.py rebuild_profile.py server.py video_pack.py
           node --check extension/content-script.js
+          node --check extension/page-hook.js
           node --check extension/page-bridge.js
           node --check extension/popup.js
           node --check extension/service-worker.js
@@ -41,6 +42,8 @@ jobs:
         run: xvfb-run -a python -u -B tests/standalone_caption_browser.py
       - name: Closed-shadow security contract
         run: xvfb-run -a python -u -B tests/closed_shadow_security_browser.py
+      - name: Native one-shot caption response contract
+        run: xvfb-run -a python -u -B tests/native_caption_capture_browser.py
       - name: Build extension archive
         run: python tools/build_extension.py --output-dir dist
       - uses: actions/upload-artifact@v4

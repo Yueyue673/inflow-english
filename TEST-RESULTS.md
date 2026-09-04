@@ -1,4 +1,4 @@
-# Verification record — InFlow English 0.2.4
+# Verification record — InFlow English 0.2.5
 
 _Verified: 2026-09-04. This file records observed engineering results, not learning-effect claims._
 
@@ -6,7 +6,7 @@ _Verified: 2026-09-04. This file records observed engineering results, not learn
 
 ```text
 product              inflow-english
-extension             0.2.4
+extension             0.2.5
 policy                adaptive-v5
 profile schema         3
 reducer               rules-v5
@@ -22,7 +22,7 @@ Production active learning for long videos remains disabled.
 A fresh CPython 3.11 virtual environment was created from `requirements/ci.txt`, Open English WordNet 2024 was installed, and the staged Git index was exported to a new directory containing **only tracked public files**. The suite was run from that export.
 
 ```text
-Ran 156 tests in 19.592s
+Ran 158 tests in 21.345s
 OK (skipped=4)
 ```
 
@@ -52,12 +52,14 @@ All browser contracts used isolated temporary profiles and data directories, a r
 ### Standalone captions — no localhost permission
 
 ```text
-host visible              123 ms
-bilingual caption ready   725 ms
-missing-track error       4068 ms
-retry after recovery      22 ms
-same-document SPA switch  74 ms
-status geometry           124.94 × 32 px
+host visible                 195 ms
+bilingual caption ready      1560 ms
+missing-track error          4581 ms
+automatic play retry ready   770 ms
+same-document SPA switch     579 ms
+status geometry              124.94 × 32 px
+in-script status metric      5 ms
+in-script retry attempt      465 ms
 ```
 
 Observed:
@@ -67,7 +69,7 @@ Observed:
 - ads hide captions and block sentence replay;
 - stale captions do not survive same-document navigation;
 - missing tracks stop within five seconds;
-- retry succeeds without a page reload;
+- a paused/background open retries once automatically on first playback;
 - no backend caption job is created.
 
 ### Closed production boundary
@@ -79,11 +81,22 @@ synthetic keyboard blocked     true
 accessible status              InFlow 字幕已就绪
 ```
 
+### Native one-shot timed-text response
+
+The browser fixture served each English/Chinese native request successfully only once, then returned an empty body to every duplicate request. The document-start hook still published:
+
+```text
+The native response is captured once.
+原生响应只捕获一次。
+```
+
+This regression fails if the extension returns to re-fetching one-time/PO-bound timed-text URLs.
+
 ### Optional learning path
 
 ```text
 automatic learning default/permission gate  passed
-continuous-play gate to working             8125 ms
+continuous-play gate to working             8106 ms
 natural-phrase interaction completed        1
 mandatory familiarity write                 none
 manual replay count                         1
@@ -157,11 +170,11 @@ A complete pre-migration copy was created under the ignored local `data/backups/
 
 ## Release archive
 
-`python tools/build_extension.py --output-dir dist` produced an exact 11-file allowlist archive:
+`python tools/build_extension.py --output-dir dist` produced an exact 12-file allowlist archive:
 
 ```text
-InFlow-English-Chrome-0.2.4.zip
-SHA-256 63735a104d2aa05a83432f6d1b71c62e31ba8534a5dd418fa2e94a004826f490
+InFlow-English-Chrome-0.2.5.zip
+SHA-256 149751f6d76bb885cb58458ea6ba9fbd88a23bceb7da65881f3dfb22d6a2ab4c
 ```
 
 Archive verification returned no bad member. Its manifest exactly matched `extension/manifest.json`:
@@ -174,7 +187,7 @@ optional host              http://127.0.0.1:8767/*
 
 ## Public-source leak gate
 
-The staged candidate contained 101 files and no match for:
+The staged candidate contained 106 files and no match for:
 
 - the developer's Windows username or QA-drive path;
 - credential-shaped OpenAI/GitHub/bearer values;
@@ -200,15 +213,33 @@ Three anonymous `yt-dlp` metadata attempts also failed with `yt_dlp_inspect_fail
 
 ### Existing signed-in Chrome
 
-The user's signed-in Chrome is the required final environment, but exact DevTools inspection was refused because `computer_use.grant_existing_profile: true` is not enabled. Native inspection showed the active page was a YouTube Shorts route, which is intentionally unsupported and was not disturbed.
+The unpacked extension card was read back as `0.2.5`, then two ordinary watch pages were exercised through native Chrome UI/AX without DevTools access:
 
-Therefore these release gates remain open:
+```text
+arj7oStGLkU   visible two-line InFlow caption
+               status: InFlow 字幕已就绪
 
-- one signed-in, ordinary `/watch?v=` first-state/first-caption timing run with 0.2.4;
-- a representative real-video matrix;
+iG9CE55wbtY   visible two-line InFlow caption
+               status visible: 11 ms
+               post-play caption attempt: 2379 ms
+```
+
+A screenshot inspection verified that the second video's visible English and Chinese lines covered the same sentence:
+
+```text
+despite all the expertise that's been on parade for the past four days,
+儘管我們在過去四天中探討了各種專業知識—
+```
+
+The videos were muted during QA. The route-to-ready value from the second page included several minutes of deliberate diagnostic waiting and is intentionally excluded from latency claims.
+
+The remaining release gates are:
+
+- no-caption, network-loss, browser-restart and low-resource cases on representative real videos;
 - real long-video 60 s / 5220 s transport after a lawful, non-cookie-dependent source path;
 - Chrome Web Store approval;
-- a signed optional-backend installer.
+- a signed optional-backend installer;
+- a user-owned real learning interaction and restart recovery from the final install surface.
 
 ## Product-value boundary
 

@@ -6,6 +6,7 @@ import json
 import subprocess
 import unittest
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 EXTENSION = ROOT / "extension"
@@ -18,7 +19,7 @@ class ExtensionContractTests(unittest.TestCase):
 
     def test_manifest_v3_has_stable_id_and_minimal_permissions(self):
         self.assertEqual(self.manifest["manifest_version"], 3)
-        self.assertEqual(self.manifest["version"], "0.2.4")
+        self.assertEqual(self.manifest["version"], "0.2.5")
         public_key = base64.b64decode(self.manifest["key"], validate=True)
         alphabet = "abcdefghijklmnop"
         extension_id = "".join(alphabet[byte >> 4] + alphabet[byte & 15] for byte in hashlib.sha256(public_key).digest()[:16])
@@ -33,7 +34,11 @@ class ExtensionContractTests(unittest.TestCase):
             ["http://127.0.0.1:8767/*"],
         )
         self.assertEqual(self.manifest["web_accessible_resources"], [{"resources": ["page-bridge.js"], "matches": ["https://www.youtube.com/*"]}])
+        self.assertEqual(self.manifest["content_scripts"][0]["js"], ["page-hook.js"])
         self.assertEqual(self.manifest["content_scripts"][0]["run_at"], "document_start")
+        self.assertEqual(self.manifest["content_scripts"][0]["world"], "MAIN")
+        self.assertEqual(self.manifest["content_scripts"][1]["js"], ["content-script.js"])
+        self.assertEqual(self.manifest["content_scripts"][1]["run_at"], "document_start")
         forbidden = {"cookies", "downloads", "webRequest", "nativeMessaging", "clipboardRead", "clipboardWrite", "<all_urls>"}
         self.assertFalse(forbidden.intersection(self.manifest["permissions"] + self.manifest["host_permissions"]))
 
@@ -41,7 +46,7 @@ class ExtensionContractTests(unittest.TestCase):
         paths = [
             self.manifest["background"]["service_worker"],
             self.manifest["action"]["default_popup"],
-            self.manifest["content_scripts"][0]["js"][0],
+            *[entry["js"][0] for entry in self.manifest["content_scripts"]],
             *self.manifest["icons"].values(),
             *self.manifest["action"]["default_icon"].values(),
             "popup.js",
@@ -49,7 +54,7 @@ class ExtensionContractTests(unittest.TestCase):
             "page-bridge.js",
         ]
         self.assertTrue(all((EXTENSION / path).is_file() for path in paths))
-        for script in ("service-worker.js", "popup.js", "content-script.js", "page-bridge.js"):
+        for script in ("service-worker.js", "popup.js", "content-script.js", "page-hook.js", "page-bridge.js"):
             result = subprocess.run(
                 ["node", "--check", str(EXTENSION / script)],
                 capture_output=True,
@@ -58,6 +63,23 @@ class ExtensionContractTests(unittest.TestCase):
                 creationflags=CREATE_NO_WINDOW,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_main_world_hook_captures_only_bounded_youtube_timedtext(self):
+        source = (EXTENSION / "page-hook.js").read_text(encoding="utf-8")
+        for required in (
+            'location.pathname !== "/watch"',
+            'url.pathname !== "/api/timedtext"',
+            "MAX_BYTES = 5_000_000",
+            "MAX_ENTRIES = 6",
+            "TTL_MS = 120_000",
+            "response.clone().arrayBuffer()",
+            'source: "inflow-caption-cache-response"',
+            "entries.length > MAX_ENTRIES",
+        ):
+            self.assertIn(required, source)
+        self.assertNotIn("document.cookie", source)
+        self.assertNotIn("chrome.", source)
+        self.assertNotIn("127.0.0.1", source)
 
     def test_service_worker_is_bounded_not_an_arbitrary_localhost_proxy(self):
         source = (EXTENSION / "service-worker.js").read_text(encoding="utf-8")
@@ -165,37 +187,74 @@ class ExtensionContractTests(unittest.TestCase):
         bridge = (EXTENSION / "page-bridge.js").read_text(encoding="utf-8")
         self.assertIn('url.pathname !== "/api/timedtext"', bridge)
         self.assertIn('new Set(["youtube.com", "www.youtube.com", "m.youtube.com"])', bridge)
-        self.assertIn('credentials: "omit"', bridge)
+        self.assertIn('credentials: "same-origin"', bridge)
         self.assertIn('redirect: "error"', bridge)
-        self.assertIn("rawUrl.length > 8192", bridge)
+        self.assertIn("value.length > 8192", bridge)
         self.assertIn("tracks.slice(0, 100)", bridge)
         self.assertIn("response.body.getReader()", bridge)
         self.assertIn("total > 5_000_000", bridge)
-        self.assertIn("setTimeout(() => controller.abort(), 3200)", bridge)
+        self.assertIn("observedTimedTextUrl", bridge)
+        self.assertIn('performance.getEntriesByType("resource")', bridge)
+        self.assertIn('reject(new Error("youtube_caption_fetch_timeout"))', bridge)
+        self.assertIn("Promise.race([operation, hardTimeout])", bridge)
         self.assertNotIn("chrome.cookies", bridge)
         harness = """
         global.sent = null;
-        global.window = { postMessage: (payload) => { global.sent = payload; } };
+        global.messageListeners = new Set();
+        global.window = {
+          addEventListener: (type, listener) => { if (type === 'message') global.messageListeners.add(listener); },
+          removeEventListener: (type, listener) => { if (type === 'message') global.messageListeners.delete(listener); },
+          postMessage: (payload) => {
+            if (payload?.source === 'inflow-caption-cache-request') {
+              queueMicrotask(() => {
+                const responseEvent = { source: global.window, origin: global.location.origin, data: { source: 'inflow-caption-cache-response', nonce: payload.nonce, video_id: payload.video_id, entries: [] } };
+                [...global.messageListeners].forEach(listener => listener(responseEvent));
+              });
+            } else {
+              global.sent = payload;
+            }
+          },
+        };
         global.location = { origin: 'https://www.youtube.com' };
         const currentScript = { dataset: { inflowNonce: '12345678-1234-1234-1234-123456789abc', inflowVideoId: 'abcdefghijk' }, remove() {} };
         const response = { videoDetails: { videoId: 'abcdefghijk', title: 'Fixture', lengthSeconds: '60' }, captions: { playerCaptionsTracklistRenderer: { captionTracks: [{ baseUrl: 'https://www.youtube.com/api/timedtext?v=abcdefghijk&lang=en', languageCode: 'en', isTranslatable: true }] } } };
-        global.document = { currentScript, querySelector: (selector) => selector === '#movie_player' ? { getPlayerResponse: () => response } : { duration: 60 } };
+        global.resourceEntries = [{ name: 'https://www.youtube.com/api/timedtext?v=abcdefghijk&lang=en&pot=proof&tlang=zh' }];
+        const player = {
+          getPlayerResponse: () => response,
+          getOption: () => ({ languageCode: 'en', translationLanguage: { languageCode: 'zh' } }),
+          setOption: (_module, _name, value) => {
+            if (value?.languageCode === 'en' && !value?.translationLanguage) global.resourceEntries.push({ name: 'https://www.youtube.com/api/timedtext?v=abcdefghijk&lang=en&pot=proof' });
+          },
+        };
+        global.document = { currentScript, querySelector: (selector) => selector === '#movie_player' ? player : { duration: 60 } };
+        global.performance = { getEntriesByType: () => global.resourceEntries };
+        global.fetchUrls = [];
         const captionBytes = new TextEncoder().encode(JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'Hello' }] }] }));
-        global.fetch = async () => ({
-          ok: true,
-          status: 200,
-          headers: { get: name => name === 'content-length' ? String(captionBytes.byteLength) : null },
-          body: { getReader: () => { let sent = false; return { read: async () => sent ? { done: true } : (sent = true, { done: false, value: captionBytes }) }; } },
-        });
-        """ + bridge + "\nsetTimeout(() => process.stdout.write(JSON.stringify(global.sent)), 30);"
+        global.fetch = async (url) => {
+          global.fetchUrls.push(String(url));
+          return {
+            ok: true,
+            status: 200,
+            headers: { get: name => name === 'content-length' ? String(captionBytes.byteLength) : null },
+            body: { getReader: () => { let sent = false; return { read: async () => sent ? { done: true } : (sent = true, { done: false, value: captionBytes }) }; } },
+          };
+        };
+        """ + bridge + "\nsetTimeout(() => process.stdout.write(JSON.stringify({sent:global.sent,urls:global.fetchUrls})), 900);"
         result = subprocess.run(["node", "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=5, creationflags=CREATE_NO_WINDOW)
         self.assertEqual(result.returncode, 0, result.stderr)
-        payload = json.loads(result.stdout)
+        output = json.loads(result.stdout)
+        payload = output["sent"]
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["video_id"], "abcdefghijk")
         self.assertEqual(len(payload["english"]["events"]), 1)
         self.assertEqual(payload["source"], "inflow-page-caption-bridge")
         self.assertEqual(payload["caption_source"], "youtube_page_player")
+        self.assertEqual(len(output["urls"]), 2)
+        parsed_urls = [urlsplit(value) for value in output["urls"]]
+        queries = [parse_qs(value.query) for value in parsed_urls]
+        self.assertTrue(all(query.get("pot") == ["proof"] for query in queries))
+        self.assertTrue(any("tlang" not in query for query in queries))
+        self.assertTrue(any(query.get("tlang") == ["zh-Hans"] for query in queries))
 
     def test_startup_status_is_visible_without_hover(self):
         source = (EXTENSION / "content-script.js").read_text(encoding="utf-8")
@@ -205,6 +264,29 @@ class ExtensionContractTests(unittest.TestCase):
         self.assertNotIn("width:10px", source)
         self.assertNotIn("font-size:0", source)
         self.assertNotIn("color:transparent", source)
+
+    def test_page_caption_alignment_never_concatenates_neighboring_chinese_rows(self):
+        source = (EXTENSION / "content-script.js").read_text(encoding="utf-8")
+        start = source.index("function pageCaptionOverlap")
+        end = source.index("\n\n  function applySubtitlePreview", start)
+        functions = source[start:end]
+        script = functions + """
+        const aligned = mergePageCaptionTracks(
+          [{start:0,end:3,text:'English one'},{start:3,end:6,text:'English two'}],
+          [{start:0,end:3,text:'中文一'},{start:1.5,end:5.8,text:'中文二'}]
+        );
+        const fallback = mergePageCaptionTracks(
+          [{start:10,end:12,text:'English current'}],
+          [{start:8,end:10.8,text:'上一句'},{start:10.1,end:12.1,text:'当前句'}]
+        );
+        process.stdout.write(JSON.stringify({aligned,fallback}));
+        """
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", creationflags=CREATE_NO_WINDOW)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual([row["text_zh"] for row in payload["aligned"]], ["中文一", "中文二"])
+        self.assertEqual(payload["fallback"][0]["text_zh"], "当前句")
+        self.assertNotIn("上一句当前句", json.dumps(payload, ensure_ascii=False))
 
     def test_page_caption_track_parser_publishes_timed_rows(self):
         source = (EXTENSION / "content-script.js").read_text(encoding="utf-8")

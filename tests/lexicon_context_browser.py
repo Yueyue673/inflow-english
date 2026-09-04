@@ -168,8 +168,14 @@ def main() -> None:
                     raise AssertionError({"state": state, "page_errors": page_errors, "worker_errors": worker_errors}) from exc
                 first_bank = host.locator('#captionEnglish .token').filter(has_text="bank")
                 first_bank.wait_for(state="visible", timeout=5_000)
-                if first_bank.get_attribute("data-status") != "known" or first_bank.get_attribute("data-knowledge-key") != first_key:
-                    raise AssertionError({"first_status": first_bank.get_attribute("data-status"), "first_key": first_bank.get_attribute("data-knowledge-key")})
+                page.wait_for_function(
+                    """expected => {
+                      const token=[...document.querySelector('#inflow-extension-root')?.shadowRoot?.querySelectorAll('#captionEnglish .token')||[]].find(row=>row.textContent==='bank');
+                      return token?.dataset.status==='known' && token?.dataset.knowledgeKey===expected;
+                    }""",
+                    arg=first_key,
+                    timeout=5_000,
+                )
 
                 page.locator("video").evaluate("video => video.play()")
                 page.wait_for_function("() => document.querySelector('#inflow-extension-root')?.shadowRoot?.querySelector('#captionEnglish')?.textContent.includes('called the bank')", timeout=10_000)

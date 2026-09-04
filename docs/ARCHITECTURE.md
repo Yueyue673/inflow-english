@@ -50,6 +50,10 @@ The local path may enrich the product, but it cannot delay or break the standalo
 
 ## Extension responsibilities
 
+### `page-hook.js`
+
+Runs at document start in YouTube's MAIN world on ordinary `/watch` pages only. It wraps the page's existing fetch/XHR calls without changing their return values, copies only successful exact `/api/timedtext` JSON3 responses, and keeps a six-entry/5 MB/two-minute in-memory cache. It cannot call Chrome extension APIs or localhost and never reads cookie values.
+
 ### `page-bridge.js`
 
 Runs in the page's MAIN world because YouTube player response objects are not visible from the isolated content-script world. It receives one nonce and one expected video ID, validates the matching player response, fetches bounded timed-text payloads and returns them once through `window.postMessage`.

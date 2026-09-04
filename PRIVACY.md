@@ -10,9 +10,12 @@ The extension:
 
 - runs only on ordinary `https://www.youtube.com/watch` pages;
 - reads the current video's caption-track metadata already available to the YouTube player;
-- requests timed-text only from `youtube.com`, `www.youtube.com` or `m.youtube.com`;
-- requests captions with `credentials: omit` and rejects redirects;
-- keeps caption payloads in the current tab's memory;
+- installs a packaged MAIN-world hook at `document_start` on ordinary `/watch` pages only;
+- copies only successful YouTube `/api/timedtext` JSON3 responses that the player itself receives;
+- holds at most six validated response copies, each at most 5 MB, for at most two minutes in the current tab's memory;
+- may use a bounded same-origin timed-text fallback; YouTube may attach its own same-origin session, but InFlow never reads or exports cookie values;
+- rejects redirects and accepts timed text only from `youtube.com`, `www.youtube.com` or `m.youtube.com`;
+- keeps parsed caption payloads in the current tab's memory;
 - stores `auto captions`, `experimental automatic learning`, caption size and per-document owner identifiers in Chrome extension storage;
 - does not request the cookies, browsing history, downloads, clipboard, webRequest or `<all_urls>` permissions;
 - does not send telemetry, crash reports, captions or vocabulary state to an InFlow cloud service.

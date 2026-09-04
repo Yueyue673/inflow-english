@@ -2,6 +2,24 @@
 
 All notable public changes are documented here.
 
+## 0.2.5 — 2026-09-04
+
+### Fixed in signed-in Chrome
+
+- Capture the YouTube player's successful native timed-text responses at document start instead of re-fetching one-time/PO-bound URLs.
+- Keep the capture cache in the current tab only: six entries, 5 MB each, two-minute TTL.
+- Switch briefly to missing English/Chinese tracks through the player, capture their native responses, then restore the user's prior track.
+- Add a hard Promise timeout so a hung response stream cannot suppress another usable track.
+- Align each English cue to one closest Chinese row instead of concatenating overlapping rolling captions from neighbouring sentences.
+- After a paused/background open fails, retry captions once automatically when playback first starts.
+- Reset expected play/pause ownership counters across navigation.
+
+### Real Chrome evidence
+
+- `arj7oStGLkU`: visible bilingual InFlow caption in the signed-in Chrome profile.
+- `iG9CE55wbtY`: visible bilingual caption after native-response capture; English and Chinese remained within the same sentence scope.
+- The 0.2.5 card was read back from `chrome://extensions` before testing.
+
 ## 0.2.4 — 2026-09-04
 
 ### Fixed

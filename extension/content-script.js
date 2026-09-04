@@ -71,6 +71,8 @@
   let subtitleState = "idle";
   let subtitleTaskVideoId = null;
   let subtitleTask = null;
+  let automaticSubtitleRetryVideoId = null;
+  let automaticSubtitleRetryAttempts = 0;
   let nativeCaptionsOwned = false;
   let nativeCaptionBridgeAttemptedFor = null;
   let adObserver = null;
@@ -88,6 +90,10 @@
   let learningRetryBlocked = false;
   let sessionTakeoverRequired = false;
   let keyboardActivatedControl = null;
+  let routeStartedAt = performance.now();
+  let routeStatusVisibleAt = null;
+  let subtitleAttemptStartedAt = null;
+  let subtitleReadyAt = null;
 
   const host = document.createElement("div");
   host.id = "inflow-extension-root";
@@ -331,6 +337,15 @@
       backendAvailable,
       learningRetryBlocked,
       sessionTakeoverRequired,
+      expectedPlay,
+      expectedPause,
+      automaticSubtitleRetryArmed: automaticSubtitleRetryVideoId === videoId,
+      automaticSubtitleRetryAttempts,
+      performanceMetrics: {
+        status_visible_ms: routeStatusVisibleAt === null ? null : Math.max(0, Math.round(routeStatusVisibleAt - routeStartedAt)),
+        caption_attempt_ms: subtitleReadyAt === null || subtitleAttemptStartedAt === null ? null : Math.max(0, Math.round(subtitleReadyAt - subtitleAttemptStartedAt)),
+        caption_route_ms: subtitleReadyAt === null ? null : Math.max(0, Math.round(subtitleReadyAt - routeStartedAt)),
+      },
       message: message || (videoId ? waitingMessage() : "当前不是普通 YouTube 视频。"),
       candidatePool: Number(session?.candidate_pool_count || 0),
       interventionBudgets: session?.intervention_budgets || null,
@@ -340,6 +355,7 @@
   function renderStatus() {
     host.hidden = !videoId;
     if (!videoId) return;
+    if (routeStatusVisibleAt === null) routeStatusVisibleAt = performance.now();
     syncVideoBounds();
     if (statusError) {
       pill.dataset.state = "error";
@@ -372,6 +388,10 @@
     }
     pill.dataset.expanded = panelOpen || statusError ? "true" : "false";
     pill.setAttribute("aria-label", pill.textContent);
+    const metrics = publicState().performanceMetrics;
+    pill.title = subtitleActive && metrics.caption_attempt_ms !== null
+      ? `字幕本次准备 ${metrics.caption_attempt_ms} ms · 页面累计 ${metrics.caption_route_ms} ms`
+      : `状态出现 ${metrics.status_visible_ms ?? 0} ms`;
     panel.hidden = !panelOpen;
     panelMessage.textContent = message || (subtitleActive ? readyMessage() : waitingMessage());
     panelPrimary.textContent = sessionTakeoverRequired
@@ -481,14 +501,30 @@
     return overlap >= 0.35 || overlap / Math.min(sourceDuration, rowDuration) >= 0.35;
   }
 
+  function bestChineseCaption(englishRow, englishIndex, chinese) {
+    if (!chinese.length) return "";
+    const indexed = chinese[englishIndex];
+    if (indexed && Math.abs(Number(indexed.start) - Number(englishRow.start)) <= 1.25) return String(indexed.text || "");
+    const start = Number(englishRow.start);
+    const end = Number(englishRow.end);
+    const candidates = chinese.filter((candidate) => pageCaptionOverlap(start, end, candidate));
+    if (!candidates.length) return "";
+    const midpoint = (start + end) / 2;
+    return String(candidates.sort((left, right) => {
+      const leftMidpoint = (Number(left.start) + Number(left.end)) / 2;
+      const rightMidpoint = (Number(right.start) + Number(right.end)) / 2;
+      const leftBoundaryError = Math.abs(Number(left.start) - start) + Math.abs(Number(left.end) - end) + Math.abs(leftMidpoint - midpoint) * 0.5;
+      const rightBoundaryError = Math.abs(Number(right.start) - start) + Math.abs(Number(right.end) - end) + Math.abs(rightMidpoint - midpoint) * 0.5;
+      return leftBoundaryError - rightBoundaryError;
+    })[0]?.text || "");
+  }
+
   function mergePageCaptionTracks(english, chinese) {
     const primary = english.length ? english : chinese;
     return primary.map((row, index) => {
       const start = Number(row.start);
       const end = Number(row.end);
-      const zh = english.length
-        ? mergeCaptionFragments(chinese.filter((candidate) => pageCaptionOverlap(start, end, candidate)))
-        : String(row.text || "");
+      const zh = english.length ? bestChineseCaption(row, index, chinese) : String(row.text || "");
       return {
         id: `page-caption-${String(index + 1).padStart(5, "0")}`,
         start,
@@ -530,7 +566,7 @@
         }
         finish(resolve, data);
       };
-      const timer = setTimeout(() => finish(reject, new Error("youtube_page_bridge_timeout")), 3500);
+      const timer = setTimeout(() => finish(reject, new Error("youtube_page_bridge_timeout")), 4000);
       script.src = chrome.runtime.getURL("page-bridge.js");
       script.dataset.inflowNonce = nonce;
       script.dataset.inflowVideoId = targetVideoId;
@@ -544,7 +580,7 @@
     const startedDuringAd = inAd();
     subtitleState = startedDuringAd ? "waiting_ad" : "loading";
     renderStatus();
-    const deadline = performance.now() + 4000;
+    const deadline = performance.now() + 4300;
     let lastError = null;
     while (generation === routeGeneration && targetVideoId === currentVideoId() && performance.now() < deadline) {
       if (subtitleActive) return true;
@@ -611,6 +647,7 @@
       .map((row) => ({ cue_id: row.id, start_sec: Number(row.start), end_sec: Number(row.end), text: String(row.text_en) }));
     subtitleActive = captions.length > 0 || transcriptCues.length > 0;
     subtitleState = subtitleActive ? state : "failed";
+    if (subtitleActive) subtitleReadyAt = performance.now();
     if (subtitleActive) releaseNativeCaptionBridge();
     const video = sourceVideo();
     if (video && subtitleActive) {
@@ -642,6 +679,7 @@
     lexiconEntries = Array.isArray(lexicalPayload?.entries) ? lexicalPayload.entries : [];
     subtitleActive = captions.length > 0 || transcriptCues.length > 0;
     subtitleState = subtitleActive ? "ready" : "failed";
+    if (subtitleActive) subtitleReadyAt = performance.now();
     if (subtitleActive) releaseNativeCaptionBridge();
     const video = sourceVideo();
     if (video && subtitleActive) {
@@ -664,6 +702,8 @@
     const generation = routeGeneration;
     subtitleTaskVideoId = targetVideoId;
     subtitleState = "loading";
+    subtitleAttemptStartedAt = performance.now();
+    subtitleReadyAt = null;
     renderStatus();
     subtitleTask = (async () => {
       try {
@@ -714,6 +754,8 @@
           if (subtitleActive) return;
           subtitleState = "failed";
           setMessage(`页面字幕失败：${safeErrorCode(error)}。原视频和 YouTube 字幕继续播放。`, true);
+          const failedVideo = sourceVideo();
+          if (failedVideo && !failedVideo.paused) scheduleAutomaticSubtitleRetry(failedVideo, targetVideoId);
           return;
         }
       } catch {
@@ -744,6 +786,7 @@
       ensureSubtitleFirst();
     }
     const video = sourceVideo();
+    if (video) attachVideo(video);
     const playingContinuously = Boolean(videoId && video && !video.paused && !video.ended && !document.hidden && !inAd());
     if (!playingContinuously) {
       continuousPlaybackStartedAt = 0;
@@ -1029,6 +1072,8 @@
     progressiveSyncTimer = null;
     focusEpoch = 0;
     lastProgressiveFocusSec = null;
+    expectedPause = 0;
+    expectedPlay = 0;
     enabled = false;
     learningRetryBlocked = false;
     sessionTakeoverRequired = false;
@@ -1037,6 +1082,8 @@
     subtitleState = "idle";
     subtitleTaskVideoId = null;
     subtitleTask = null;
+    automaticSubtitleRetryVideoId = null;
+    automaticSubtitleRetryAttempts = 0;
     nativeCaptionsOwned = false;
     nativeCaptionBridgeAttemptedFor = null;
     adObserver?.disconnect();
@@ -1060,6 +1107,26 @@
     setMessage("当前视频的 InFlow 已暂停；YouTube 保持原样。 ");
     renderStatus();
     return publicState();
+  }
+
+  function scheduleAutomaticSubtitleRetry(video, playingVideoId = currentVideoId(), { fromPlayEvent = false } = {}) {
+    if (
+      !autoMode
+      || !video
+      || (!fromPlayEvent && video.paused)
+      || !playingVideoId
+      || subtitleActive
+      || !["failed", "degraded"].includes(subtitleState)
+      || automaticSubtitleRetryVideoId === playingVideoId
+      || inAd()
+    ) return;
+    automaticSubtitleRetryVideoId = playingVideoId;
+    setTimeout(() => {
+      if (currentVideoId() === playingVideoId && !subtitleActive && ["failed", "degraded"].includes(subtitleState)) {
+        automaticSubtitleRetryAttempts += 1;
+        retrySubtitles({ automatic: true });
+      }
+    }, 300);
   }
 
   function attachVideo(video) {
@@ -1089,6 +1156,7 @@
         userGeneration += 1;
         activeInteraction.pauseOwned = false;
       }
+      scheduleAutomaticSubtitleRetry(video, currentVideoId(), { fromPlayEvent: true });
       startMonitor();
     });
     video.addEventListener("ended", finishSession);
@@ -1683,6 +1751,10 @@
     const next = currentVideoId();
     if (next === videoId) return;
     if (enabled || preparing || subtitleActive || subtitleTask) await disable("youtube_navigation");
+    routeStartedAt = performance.now();
+    routeStatusVisibleAt = null;
+    subtitleAttemptStartedAt = null;
+    subtitleReadyAt = null;
     videoId = next;
     manualDisabledVideoId = null;
     session = null;
@@ -1709,7 +1781,7 @@
     return activate({ quiet: false, forceRetry: true });
   }
 
-  function retrySubtitles() {
+  function retrySubtitles({ automatic = false } = {}) {
     routeGeneration += 1;
     manualDisabledVideoId = null;
     subtitleTaskVideoId = null;
@@ -1717,7 +1789,7 @@
     subtitleState = "idle";
     statusError = false;
     panelOpen = false;
-    setMessage("正在重新获取字幕…");
+    setMessage(automatic ? "播放已开始，正在自动重新获取字幕…" : "正在重新获取字幕…");
     return ensureSubtitleFirst(true).then(() => publicState());
   }
 

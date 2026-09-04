@@ -21,7 +21,7 @@ This is the remaining one-time account-owner path. Code/build tasks are automate
 1. Register or open the Chrome Web Store developer dashboard.
 2. Accept the developer agreement and pay Google's one-time registration fee if the account has not done so.
 3. Verify the contact email.
-4. Create a new item and upload `InFlow-English-Chrome-0.2.4.zip` from the GitHub Release.
+4. Create a new item and upload `InFlow-English-Chrome-0.2.5.zip` from the GitHub Release.
 5. Copy the name, short description, detailed description, category and language from `LISTING.md`.
 6. Upload the icon and the two screenshots from `store/assets/`.
 7. Fill every Privacy practices field exactly as documented in `LISTING.md`; do not declare analytics, cloud sync or learning effects that do not exist.
@@ -37,7 +37,7 @@ Do not submit if the dashboard reports:
 - remotely hosted code;
 - a screenshot size error;
 - a privacy answer inconsistent with the manifest;
-- a ZIP version other than `0.2.4`;
+- a ZIP version other than `0.2.5`;
 - a package hash different from the checksum attached to the release.
 
 Do not claim that Store approval, one-click install or automatic updates exist until Google returns an approved public listing URL.

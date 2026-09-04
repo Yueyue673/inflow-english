@@ -3,7 +3,7 @@
 ## Identity
 
 - Manifest V3
-- Version `0.2.4`
+- Version `0.2.5`
 - Minimum Chrome `120`
 - Fixed development ID `hfkkhkdpakcmpokgbihceoppleeokifd`
 - Required permission: `storage`
@@ -13,9 +13,9 @@
 ## Public path
 
 ```text
-document_start visible status
+document_start visible status + bounded native-response hook
 → MAIN-world player response bridge
-→ exact YouTube timed-text endpoint
+→ captured exact YouTube timed-text payload (bounded same-origin fallback)
 → isolated content validation
 → closed Shadow DOM captions and replay
 ```
@@ -24,9 +24,10 @@ The extension must remain useful when localhost is absent. Page-caption first pa
 
 ## Security boundary
 
+- `page-hook.js` runs at document start in MAIN world on `/watch` only, copies at most six valid player timed-text responses for two minutes, and never uses Chrome APIs or localhost.
 - `page-bridge.js` receives one nonce and one expected video ID.
-- It accepts only three exact YouTube hosts, `/api/timedtext`, 100 tracks, 8 KiB URLs, 3.2 seconds and 5 MB streamed bytes.
-- It omits credentials and rejects redirects.
+- It accepts only three exact YouTube hosts, `/api/timedtext`, 100 tracks, 8 KiB URLs, hard per-track deadlines and 5 MB streamed bytes.
+- It may use YouTube same-origin credentials for a fallback request but never reads cookie values; redirects are rejected.
 - Production shadow mode is `closed`.
 - Persistent-write/playback-control handlers require trusted input.
 - Popup and content script have separate service-worker message allowlists.

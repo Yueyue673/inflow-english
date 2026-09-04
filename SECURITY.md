@@ -9,8 +9,9 @@ The current public security target is the standalone Chrome extension in `extens
 - Manifest V3; no remotely hosted code.
 - One extension permission: `storage`.
 - Host access is limited to YouTube and the optional loopback service.
-- The page bridge accepts one current video ID, only three exact YouTube hosts, only `/api/timedtext`, an 8 KiB URL limit, 100 caption tracks, a 3.2-second timeout and a streaming 5 MB response limit.
-- Caption requests omit credentials and reject redirects.
+- A packaged MAIN-world hook runs only on ordinary `/watch` pages. It observes only exact YouTube `/api/timedtext` responses, leaves the player's original fetch/XHR result unchanged, and holds at most six validated 5 MB response copies for two minutes in tab memory.
+- The page bridge accepts one current video ID, only three exact YouTube hosts, only `/api/timedtext`, an 8 KiB URL limit, 100 caption tracks, a hard per-track timeout and a streaming 5 MB response limit.
+- Fallback caption requests use only YouTube same-origin credentials and reject redirects; extension code never reads cookie values.
 - The production UI uses a closed shadow root. Private caption and knowledge state is not exposed through `host.shadowRoot`.
 - Persistent-write and playback-control UI handlers require trusted user input. A closure-scoped token permits the extension's own trusted keyboard shortcuts without accepting page-script `.click()` calls.
 - Service-worker messages are split between popup and YouTube-content allowlists. Content messages require a top-level `/watch` frame, a current `documentId`, and a matching video URL.

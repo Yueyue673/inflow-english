@@ -11,6 +11,7 @@ EXTENSION = ROOT / "extension"
 ALLOWED = {
     "manifest.json",
     "content-script.js",
+    "page-hook.js",
     "page-bridge.js",
     "service-worker.js",
     "popup.html",
