@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>InFlow English</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <strong>InFlow English</strong>
+        <span id="connection">字幕可独立使用</span>
+      </div>
+      <button id="library" type="button" disabled>本机学习库</button>
+    </header>
+
+    <section class="setting-row auto-row">
+      <div>
+        <strong>自动用于英语视频</strong>
+        <p>先加载中英字幕；本机学习服务连接后，连续观看 8 秒才准备学习。</p>
+      </div>
+      <label class="switch"><input id="autoMode" type="checkbox"><span></span></label>
+    </section>
+
+    <section id="pageState" aria-live="polite">
+      <p id="status">读取当前页面…</p>
+      <button id="primary" class="quiet-action" type="button" disabled>本视频暂停 InFlow</button>
+    </section>
+    <p id="vocabularySummary" class="vocabulary-summary">学习画像：需本机服务</p>
+
+    <fieldset id="learningSettings">
+      <legend>本机学习（实验）</legend>
+      <label class="learning-toggle">
+        <span><strong>允许自动教学暂停</strong><small>默认关闭。开启后，连续观看 8 秒才会准备；内容未就绪时不会暂停。</small></span>
+        <span class="switch"><input id="autoLearning" type="checkbox"><span></span></span>
+      </label>
+      <div id="frequencySettings">
+        <p class="sublegend">介入频率</p>
+        <div class="choices frequencies">
+          <label><input type="radio" name="frequency" value="low"><span>低</span></label>
+          <label><input type="radio" name="frequency" value="medium"><span>中</span></label>
+          <label><input type="radio" name="frequency" value="high"><span>高</span></label>
+        </div>
+        <p class="note">只控制暂停密度；候选不足时会少做。</p>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>字幕与学习卡大小</legend>
+      <div class="choices display-sizes">
+        <label><input type="radio" name="displaySize" value="small"><span>小</span></label>
+        <label><input type="radio" name="displaySize" value="medium"><span>中</span></label>
+        <label><input type="radio" name="displaySize" value="large"><span>大</span></label>
+      </div>
+    </fieldset>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,3 @@
+-r backend.txt
+httpx>=0.28,<0.29
+playwright>=1.62,<1.63

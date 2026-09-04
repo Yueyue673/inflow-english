@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements/ci.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements/ci.txt
+          python -m wn download oewn:2024
+          python -m playwright install --with-deps chromium
+      - name: Syntax and unit tests
+        run: |
+          python -m py_compile adaptive_core.py caption_preview.py launcher.py lexical_sense.py long_video.py progressive_video_pack.py rebuild_profile.py server.py video_pack.py
+          node --check extension/content-script.js
+          node --check extension/page-bridge.js
+          node --check extension/popup.js
+          node --check extension/service-worker.js
+          python -m unittest discover -s tests -p 'test_*.py' -q
+      - name: Standalone subtitle browser contract
+        run: xvfb-run -a python -u -B tests/standalone_caption_browser.py
+      - name: Closed-shadow security contract
+        run: xvfb-run -a python -u -B tests/closed_shadow_security_browser.py
+      - name: Build extension archive
+        run: python tools/build_extension.py --output-dir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: inflow-chrome-extension
+          path: |
+            dist/InFlow-English-Chrome-*.zip
+            dist/InFlow-English-Chrome-*.zip.sha256
+          if-no-files-found: error

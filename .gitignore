@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Runtime state and private/local media
+data/
+*.mp3
+*.wav
+*.mp4
+*.webm
+*.m4a
+*.sqlite
+*.sqlite3
+*.db
+
+# Builds and packaged artifacts
+build/
+dist/
+*.zip
+*.crx
+*.exe
+*.msi
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.log
+*.lock
+credentials*.json
+credentials*.yaml
+credentials*.md
+
+# Local-only migration/configuration helpers (kept on the developer machine)
+/InFlow English.vbs
+/seed-profile.json
+/dsh-translation.patch.yml
+/tools/audit_alignment.py
+/tools/audit_phrase_material.py
+/tools/audit_probe_material.py
+/tools/build_content.py
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+NUL
+nul
+
+# Temporary files
+*.tmp
+*.part
+*.bak
+*.staging/

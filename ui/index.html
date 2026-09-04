@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>InFlow English</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/ui/style.css?v=4">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <p class="brand-name">InFlow English</p>
+      <p class="brand-state" id="brandState">边看边听懂</p>
+    </div>
+
+    <fieldset class="intensity" aria-label="介入频率">
+      <legend>介入频率</legend>
+      <div class="intensity-options">
+        <label><input type="radio" name="intensity" value="low"><span>低</span></label>
+        <label><input type="radio" name="intensity" value="medium"><span>中</span></label>
+        <label><input type="radio" name="intensity" value="high"><span>高</span></label>
+      </div>
+    </fieldset>
+  </header>
+
+  <main class="app-main">
+    <section id="home" class="home">
+      <p class="eyebrow">选择你真正想看的内容</p>
+      <h1>粘贴链接，准备好就看</h1>
+      <p class="lead">现在支持公开、非直播、20 秒–15 分钟的英语 YouTube 视频。下载、转录、中文字幕和选词都由系统完成。</p>
+
+      <form id="importForm" class="import-form">
+        <label for="videoUrl">YouTube 视频链接</label>
+        <div class="import-row">
+          <input id="videoUrl" name="videoUrl" type="url" inputmode="url" autocomplete="url" placeholder="https://www.youtube.com/watch?v=…" required>
+          <button id="prepareButton" class="secondary-button" type="submit">准备视频</button>
+        </div>
+      </form>
+      <div id="importStatus" class="import-status" role="status" aria-live="polite" hidden></div>
+
+      <div class="library-heading">
+        <h2>可以观看</h2>
+        <span id="libraryCount"></span>
+      </div>
+      <div id="packList" class="pack-list" role="listbox" aria-label="已准备视频"></div>
+      <button id="startButton" class="primary-button" type="button">开始观看</button>
+      <p class="quiet-note">固定 NASA 视频只保留作回归样片。准备失败不会写入你的学习记录。</p>
+    </section>
+
+    <section id="probePanel" class="probe-panel" hidden aria-labelledby="probeTitle">
+      <p id="probePhase" class="eyebrow"></p>
+      <h1 id="probeTitle" tabindex="-1"></h1>
+      <div id="probeContent" class="probe-content"></div>
+      <div id="probeActions" class="probe-actions"></div>
+      <button id="probeSkip" class="skip-button" type="button">先看视频</button>
+    </section>
+
+    <section id="watchPanel" class="watch-panel" hidden>
+      <div class="video-shell">
+        <video id="sourceVideo" preload="metadata" controls playsinline disablepictureinpicture controlslist="nofullscreen noremoteplayback">
+          <source src="/media/source.mp4" type="video/mp4">
+        </video>
+        <div id="captionLine" class="caption-line" aria-live="off"></div>
+
+        <div id="learningLayer" class="learning-layer" hidden>
+          <div class="learning-card" role="dialog" aria-modal="true" aria-labelledby="learningTitle">
+            <p id="learningPhase" class="learning-phase"></p>
+            <h2 id="learningTitle" tabindex="-1"></h2>
+            <div id="learningContent" class="learning-content"></div>
+            <div id="learningActions" class="learning-actions"></div>
+            <button id="skipLearning" class="skip-button" type="button">跳过这次</button>
+          </div>
+        </div>
+      </div>
+      <div class="watch-footer">
+        <span id="watchStatus">正常观看</span>
+        <div class="watch-actions">
+          <button id="libraryButton" class="text-button" type="button">换视频</button>
+          <button id="resumeButton" class="secondary-button" type="button" hidden>继续播放</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="completePanel" class="complete-panel" hidden></section>
+    <section id="errorPanel" class="error-panel" hidden></section>
+  </main>
+
+  <audio id="helperAudio" preload="auto"></audio>
+  <div id="liveStatus" class="visually-hidden" role="status" aria-live="polite"></div>
+  <script type="module" src="/ui/app.js?v=8"></script>
+</body>
+</html>

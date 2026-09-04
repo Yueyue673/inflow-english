@@ -1,0 +1,7 @@
+fastapi>=0.133,<0.134
+uvicorn>=0.41,<0.42
+psutil>=7.2,<8
+wordfreq>=3.1,<4
+wn>=1.1,<2
+httpx>=0.28,<0.29
+playwright>=1.62,<1.63

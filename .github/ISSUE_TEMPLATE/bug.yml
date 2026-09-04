@@ -1,0 +1,45 @@
+---
+name: Bug report
+description: Report a reproducible InFlow problem
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include cookies, API keys, private video URLs or local learning records. Replace sensitive values with `[REDACTED]`.
+  - type: input
+    id: version
+    attributes:
+      label: InFlow version
+      placeholder: 0.2.3
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Browser and operating system
+      placeholder: Chrome 152, Windows 11
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Include the exact visible InFlow status/error and whether YouTube's own captions worked.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Give the smallest safe sequence. Share a video URL only if it is public.
+    validations:
+      required: true
+  - type: dropdown
+    id: local_learning
+    attributes:
+      label: Experimental local learning enabled?
+      options: ["No", "Yes", "Unsure"]
+    validations:
+      required: true
