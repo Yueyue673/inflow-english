@@ -174,7 +174,7 @@ function renderIntensity() {
   });
   brandState.textContent = profile.adaptive_reduced
     ? `保持${{ low: "低", medium: "中", high: "高" }[profile.explicit_intensity]}档，当前自动少打扰`
-    : "边看边听懂";
+    : "记录在本机";
 }
 
 async function changeIntensity(event) {
